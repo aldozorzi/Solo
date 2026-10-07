@@ -138,7 +138,7 @@ export default function Dashboard({ initialSection = 'payments' }: { initialSect
   };
 
   const deleteInvoice = async (invoiceId: string) => {
-    if (!confirm('Eliminare questa fattura? L\'azione non è reversibile.')) return;
+    if (!confirm('Eliminare questa fattura? Gli incassi collegati torneranno pendenti. L\'azione non è reversibile.')) return;
     try {
       const res = await fetch(`/api/invoices/${invoiceId}`, { method: 'DELETE' });
       if (res.ok) {
@@ -153,7 +153,7 @@ export default function Dashboard({ initialSection = 'payments' }: { initialSect
   };
 
   const deleteClient = async (clientId: string) => {
-    if (!confirm('Eliminare questo cliente? Verranno eliminati anche i pagamenti e le fatture associate.')) return;
+    if (!confirm('Eliminare questo cliente? L\'azione non è reversibile.')) return;
     try {
       const res = await fetch(`/api/clients/${clientId}`, { method: 'DELETE' });
       if (res.ok) {

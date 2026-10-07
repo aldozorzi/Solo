@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { prisma } from '@/lib/prisma';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 
@@ -104,6 +105,12 @@ export async function DELETE(
     await prisma.client.delete({ where: { id } });
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') {
+      return NextResponse.json(
+        { error: 'Impossibile eliminare il cliente: esistono pagamenti o fatture collegati' },
+        { status: 409 }
+      );
+    }
     if (error instanceof Error && (error.message === 'Non autenticato' || error.message.includes('accesso negato'))) {
       return NextResponse.json({ error: error.message }, { status: error.message === 'Non autenticato' ? 401 : 403 });
     }

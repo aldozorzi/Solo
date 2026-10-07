@@ -9,7 +9,8 @@ import { isValidCodiceFiscale, isValidPartitaIVA } from '@/lib/fiscal-code';
 const userUpdateSchema = z.object({
   name: z.string().min(1).optional(),
   email: z.string().email().optional(),
-  role: z.enum(['ADMIN', 'USER']).optional(),
+  // Niente campo role: il ruolo non è mai modificabile via API.
+  // Il primo utente è ADMIN, tutti gli altri sono USER.
   businessName: z.string().min(1).optional(),
   vatNumber: z
     .string()

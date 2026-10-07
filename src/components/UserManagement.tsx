@@ -43,7 +43,6 @@ interface UserManagementProps {
 const userSchema = z.object({
   email: z.string().email('Email non valida'),
   name: z.string().min(1, 'Nome obbligatorio'),
-  role: z.enum(['ADMIN', 'USER']),
   businessName: z.string().min(1, 'Denominazione obbligatoria'),
   vatNumber: z.string().length(11, 'Partita IVA deve essere 11 cifre'),
   taxCode: z.string().length(16, 'Codice Fiscale deve essere 16 caratteri'),
@@ -88,7 +87,6 @@ export function UserManagement({ onRefresh }: UserManagementProps) {
     defaultValues: {
       email: '',
       name: '',
-      role: 'USER',
       businessName: '',
       vatNumber: '',
       taxCode: '',
@@ -129,7 +127,6 @@ export function UserManagement({ onRefresh }: UserManagementProps) {
       form.reset({
         email: '',
         name: '',
-        role: 'USER',
         businessName: '',
         vatNumber: '',
         taxCode: '',
@@ -171,7 +168,6 @@ export function UserManagement({ onRefresh }: UserManagementProps) {
     form.reset({
       email: user.email,
       name: user.name,
-      role: user.role,
       businessName: user.businessName,
       vatNumber: user.vatNumber,
       taxCode: user.taxCode,
@@ -224,31 +220,20 @@ export function UserManagement({ onRefresh }: UserManagementProps) {
                 </div>
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <Label htmlFor="role">Ruolo *</Label>
-                  <Select value={form.watch('role')} onValueChange={(v) => form.setValue('role', v as UserRole)} required>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="ADMIN">Amministratore</SelectItem>
-                      <SelectItem value="USER">Utente</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor="taxRegime">Regime Fiscale *</Label>
-                  <Select value={form.watch('taxRegime')} onValueChange={(v) => form.setValue('taxRegime', v as 'FORFETTARIO' | 'ORDINARIO')} required>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="FORFETTARIO">Forfettario</SelectItem>
-                      <SelectItem value="ORDINARIO">Ordinario</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+              <div>
+                <Label htmlFor="taxRegime">Regime Fiscale *</Label>
+                <Select value={form.watch('taxRegime')} onValueChange={(v) => form.setValue('taxRegime', v as 'FORFETTARIO' | 'ORDINARIO')} required>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="FORFETTARIO">Forfettario</SelectItem>
+                    <SelectItem value="ORDINARIO">Ordinario</SelectItem>
+                  </SelectContent>
+                </Select>
+                {form.formState.errors.taxRegime && (
+                  <p className="text-sm text-red-500">{form.formState.errors.taxRegime.message}</p>
+                )}
               </div>
 
               <div className="border-t pt-4">

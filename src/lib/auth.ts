@@ -22,11 +22,17 @@ export const authOptions: NextAuthOptions = {
           where: { email: credentials.email },
         });
 
-        if (!user || !user.passwordHash) {
+        // Entrambi i rami eseguono un confronto bcrypt completo:
+        // né messaggio né tempi distinguono "utente inesistente" da "password errata".
+        if (!user) {
+          await verifyPasswordConstantTime(credentials.password, null);
           throw new Error("Credenziali non valide");
         }
 
-        const isValid = await bcrypt.compare(credentials.password, user.passwordHash);
+        const isValid = await verifyPasswordConstantTime(
+          credentials.password,
+          user.passwordHash
+        );
 
         if (!isValid) {
           throw new Error("Credenziali non valide");
@@ -104,4 +110,18 @@ export async function hashPassword(password: string): Promise<string> {
 
 export async function verifyPassword(password: string, hash: string): Promise<boolean> {
   return bcrypt.compare(password, hash);
+}
+
+// Hash fittizio (cost 12 come quelli reali, plaintext casuale e sconosciuto):
+// serve a eseguire SEMPRE il confronto bcrypt anche quando l'utente non esiste,
+// così il tempo di risposta non rivela se l'email è registrata (OWASP WSTG-ATHN-02).
+const DUMMY_PASSWORD_HASH =
+  "$2b$12$GW08l0Qo0a0itRAmlYPepOhs0xAPl4yfyJ60NUyKomLZljJCvejaC";
+
+export async function verifyPasswordConstantTime(
+  password: string,
+  hash?: string | null
+): Promise<boolean> {
+  const match = await bcrypt.compare(password, hash ?? DUMMY_PASSWORD_HASH);
+  return !!hash && match;
 }

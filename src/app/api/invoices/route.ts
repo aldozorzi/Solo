@@ -100,7 +100,20 @@ export async function POST(request: NextRequest) {
     const data = invoiceSchema.parse(body);
 
     const client = await verifyClientOwnership(userId, data.clientId);
-    await verifyPaymentsOwnership(userId, data.paymentIds);
+    const payments = await verifyPaymentsOwnership(userId, data.paymentIds);
+
+    if (!payments.every((p) => p.clientId === data.clientId)) {
+      return NextResponse.json(
+        { error: 'Tutti gli incassi devono appartenere allo stesso cliente della fattura' },
+        { status: 400 }
+      );
+    }
+    if (payments.some((p) => p.invoiceId)) {
+      return NextResponse.json(
+        { error: "Alcuni incassi sono già collegati a un'altra fattura" },
+        { status: 400 }
+      );
+    }
 
     const user = await getUserWithTaxRegime(userId);
 

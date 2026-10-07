@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { encode } from "next-auth/jwt";
 import { prisma } from "@/lib/prisma";
-import { verifyPassword } from "@/lib/auth";
+import { verifyPasswordConstantTime } from "@/lib/auth";
 
 const SESSION_MAX_AGE = 30 * 24 * 60 * 60; // 30 giorni, come in authOptions
-const SESSION_COOKIE = "next-auth.session-token"; // nome usato da NextAuth su HTTP
+
+// Stessa logica di NextAuth (getToken): cookie __Secure- solo su HTTPS,
+// altrimenti nome semplice. Così resta coerente in sviluppo (HTTP) e produzione (HTTPS).
+const useSecureCookies =
+  process.env.NEXTAUTH_URL?.startsWith("https://") ?? !!process.env.VERCEL;
+const SESSION_COOKIE = useSecureCookies
+  ? "__Secure-next-auth.session-token"
+  : "next-auth.session-token";
 
 // Solo path relativi interni: niente open redirect verso host esterni.
 function safeCallbackUrl(value: unknown): string {
@@ -36,11 +43,16 @@ export async function POST(request: NextRequest) {
         { status: 303 }
       );
 
-    if (!secret || !email || !password) return fail();
+    if (!secret) return fail();
 
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user?.passwordHash) return fail();
-    if (!(await verifyPassword(password, user.passwordHash))) return fail();
+    // Il confronto bcrypt gira SEMPRE (anche con email vuota o utente inesistente):
+    // tempi di risposta uniformi, nessun oracolo su quali email sono registrate.
+    const user = email ? await prisma.user.findUnique({ where: { email } }) : null;
+    if (!user) {
+      await verifyPasswordConstantTime(password, null);
+      return fail();
+    }
+    if (!(await verifyPasswordConstantTime(password, user.passwordHash))) return fail();
 
     // Stessi campi che il callback jwt() di authOptions mette nel token al login.
     const token = {
@@ -67,7 +79,7 @@ export async function POST(request: NextRequest) {
       httpOnly: true,
       sameSite: "lax",
       path: "/",
-      secure: false,
+      secure: useSecureCookies,
       maxAge: SESSION_MAX_AGE,
     });
     return res;

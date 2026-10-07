@@ -78,6 +78,15 @@ export async function POST(request: NextRequest) {
 
     await verifyClientOwnership(userId, data.clientId);
 
+    if (data.invoiceId) {
+      const invoice = await prisma.invoice.findFirst({
+        where: { id: data.invoiceId, userId },
+      });
+      if (!invoice) {
+        throw new Error('Fattura non trovata o accesso negato');
+      }
+    }
+
     const originalCurrency = (data.originalCurrency || '').trim().toUpperCase() || undefined;
 
     const payment = await prisma.payment.create({
