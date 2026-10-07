@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { prisma } from '@/lib/prisma';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { calculateInvoiceTotals } from '@/lib/tax';
 import { generateFatturaPAXml, userToSdiConfig, generateFileName, invoiceProgressivo } from '@/lib/xml-generator';
@@ -207,6 +208,12 @@ export async function PUT(
           { status: 400 }
         );
       }
+      if (payments.some((p) => p.invoiceId && p.invoiceId !== id)) {
+        return NextResponse.json(
+          { error: "Alcuni incassi sono già collegati a un'altra fattura" },
+          { status: 400 }
+        );
+      }
       paymentConnect = data.paymentIds.map((pid) => ({ id: pid }));
     }
 
@@ -280,6 +287,12 @@ export async function DELETE(
     await prisma.invoice.delete({ where: { id } });
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') {
+      return NextResponse.json(
+        { error: 'Impossibile eliminare la fattura: esistono dati collegati' },
+        { status: 409 }
+      );
+    }
     if (error instanceof Error && (error.message === 'Non autenticato' || error.message.includes('accesso negato'))) {
       return NextResponse.json({ error: error.message }, { status: error.message === 'Non autenticato' ? 401 : 403 });
     }
