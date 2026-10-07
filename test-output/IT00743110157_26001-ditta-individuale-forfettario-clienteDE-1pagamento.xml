@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FatturaElettronica xmlns="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" versione="FPR12" SistemaEmittente="Solo">
+  <FatturaElettronicaHeader xmlns="">
+    <DatiTrasmissione xmlns="">
+      <IdTrasmittente>
+        <IdPaese>IT</IdPaese>
+        <IdCodice>00743110157</IdCodice>
+      </IdTrasmittente>
+      <ProgressivoInvio>26003</ProgressivoInvio>
+      <FormatoTrasmissione>FPR12</FormatoTrasmissione>
+      <CodiceDestinatario>XXXXXXX</CodiceDestinatario>
+      <ContattiTrasmittente>
+        <Email>xml-matrix-muy5obqy_mwv_b40ce851-ditta_individuale-forfettario@example.com</Email>
+      </ContattiTrasmittente>
+    </DatiTrasmissione>
+    <CedentePrestatore xmlns="">
+      <DatiAnagrafici>
+        <IdFiscaleIVA>
+          <IdPaese>IT</IdPaese>
+          <IdCodice>00743110157</IdCodice>
+        </IdFiscaleIVA>
+        <CodiceFiscale>ZRZLDA82M09D969K</CodiceFiscale>
+        <Anagrafica>
+          <Denominazione>XML Matrix DITTA_INDIVIDUALE FORFETTARIO</Denominazione>
+        </Anagrafica>
+        <RegimeFiscale>RF19</RegimeFiscale>
+      </DatiAnagrafici>
+      <Sede>
+        <Indirizzo>Via Test 1</Indirizzo>
+        <NumeroCivico>SNC</NumeroCivico>
+        <CAP>10100</CAP>
+        <Comune>Torino</Comune>
+        <Provincia>TO</Provincia>
+        <Nazione>IT</Nazione>
+      </Sede>
+      <Contatti>
+        <Email>xml-matrix-muy5obqy_mwv_b40ce851-ditta_individuale-forfettario@example.com</Email>
+      </Contatti>
+    </CedentePrestatore>
+    <CessionarioCommittente xmlns="">
+      <DatiAnagrafici>
+        <IdFiscaleIVA>
+          <IdPaese>DE</IdPaese>
+          <IdCodice>DE123456789</IdCodice>
+        </IdFiscaleIVA>
+        <Anagrafica>
+          <Denominazione>Cliente Germania</Denominazione>
+        </Anagrafica>
+      </DatiAnagrafici>
+      <Sede>
+        <Indirizzo>Via Roma 1</Indirizzo>
+        <NumeroCivico>SNC</NumeroCivico>
+        <CAP>10115</CAP>
+        <Comune>Berlin</Comune>
+        <Nazione>DE</Nazione>
+      </Sede>
+    </CessionarioCommittente>
+  </FatturaElettronicaHeader>
+  <FatturaElettronicaBody xmlns="">
+    <DatiGenerali xmlns="">
+      <DatiGeneraliDocumento>
+        <TipoDocumento>TD01</TipoDocumento>
+        <Divisa>EUR</Divisa>
+        <Data>2026-10-07</Data>
+        <Numero>3</Numero>
+        <DatiBollo>
+          <BolloVirtuale>SI</BolloVirtuale>
+          <ImportoBollo>2.00</ImportoBollo>
+        </DatiBollo>
+        <ImportoTotaleDocumento>532.44</ImportoTotaleDocumento>
+        <Causale>Operazione non soggetta ad IVA - Regime forfettario art. 1, commi 54-89, L. 190/2014</Causale>
+      </DatiGeneraliDocumento>
+    </DatiGenerali>
+    <DatiBeniServizi xmlns="">
+      <DettaglioLinee>
+        <NumeroLinea>1</NumeroLinea>
+        <Descrizione>Servizio di consulenza</Descrizione>
+        <Quantita>1.00</Quantita>
+        <UnitaMisura>NR</UnitaMisura>
+        <PrezzoUnitario>532.44</PrezzoUnitario>
+        <PrezzoTotale>532.44</PrezzoTotale>
+        <AliquotaIVA>0.00</AliquotaIVA>
+        <Natura>N2.2</Natura>
+      </DettaglioLinee>
+      <DatiRiepilogo>
+        <AliquotaIVA>0.00</AliquotaIVA>
+        <Natura>N2.2</Natura>
+        <ImponibileImporto>532.44</ImponibileImporto>
+        <Imposta>0.00</Imposta>
+        <EsigibilitaIVA>I</EsigibilitaIVA>
+        <RiferimentoNormativo>Art.7-ter DPR 633/72 - forfettario L.190/2014</RiferimentoNormativo>
+      </DatiRiepilogo>
+    </DatiBeniServizi>
+    <DatiPagamento xmlns="">
+      <CondizioniPagamento>TP02</CondizioniPagamento>
+      <DettaglioPagamento>
+        <ModalitaPagamento>MP05</ModalitaPagamento>
+        <DataRiferimentoTerminiPagamento>2026-10-06</DataRiferimentoTerminiPagamento>
+        <DataScadenzaPagamento>2026-10-06</DataScadenzaPagamento>
+        <ImportoPagamento>532.44</ImportoPagamento>
+      </DettaglioPagamento>
+    </DatiPagamento>
+  </FatturaElettronicaBody>
+</FatturaElettronica>

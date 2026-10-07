@@ -10,18 +10,30 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Loader2, CheckCircle2 } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { isValidCodiceFiscale, isValidPartitaIVA } from '@/lib/fiscal-code';
 
 const settingsSchema = z.object({
-  senderName: z.string().min(1, 'Denominazione obbligatoria'),
-  senderVat: z.string().length(11, 'Partita IVA deve essere 11 cifre'),
-  senderTaxCode: z.string().length(16, 'Codice Fiscale deve essere 16 caratteri'),
-  senderAddress: z.string().min(1, 'Indirizzo obbligatorio'),
-  senderNumber: z.string().min(1, 'Numero civico obbligatorio'),
-  senderZip: z.string().length(5, 'CAP deve essere 5 cifre'),
-  senderCity: z.string().min(1, 'Comune obbligatorio'),
-  senderProvince: z.string().length(2, 'Provincia (sigla, 2 caratteri)'),
-  senderEmail: z.string().email('Email non valida').optional().or(z.literal('')),
-  senderPhone: z.string().optional().or(z.literal('')),
+  businessName: z.string().min(1, 'Denominazione obbligatoria'),
+  vatNumber: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .length(11, 'Partita IVA deve essere 11 cifre')
+    .refine(isValidPartitaIVA, { message: 'Partita IVA non valida (codice di controllo errato)' }),
+  taxCode: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .length(16, 'Codice Fiscale deve essere 16 caratteri')
+    .refine(isValidCodiceFiscale, { message: 'Codice Fiscale non valido (codice di controllo errato)' }),
+  address: z.string().min(1, 'Indirizzo obbligatorio'),
+  city: z.string().min(1, 'Comune obbligatorio'),
+  zipCode: z.string().length(5, 'CAP deve essere 5 cifre'),
+  province: z.string().length(2, 'Provincia (sigla, 2 caratteri)'),
+  country: z.string().min(1).default('IT'),
+  taxRegime: z.enum(['FORFETTARIO', 'ORDINARIO']),
+  senderType: z.enum(['LIBERO_PROFESSIONISTA', 'DITTA_INDIVIDUALE', 'SOCIETA']),
 });
 
 type SettingsFormData = z.infer<typeof settingsSchema>;
@@ -35,18 +47,18 @@ export function SettingsForm({ onSettingsChange }: SettingsFormProps) {
   const [loading, setLoading] = useState(true);
 
   const form = useForm<SettingsFormData>({
-    resolver: zodResolver(settingsSchema),
+    resolver: zodResolver(settingsSchema) as any,
     defaultValues: {
-      senderName: '',
-      senderVat: '',
-      senderTaxCode: '',
-      senderAddress: '',
-      senderNumber: '',
-      senderZip: '',
-      senderCity: '',
-      senderProvince: '',
-      senderEmail: '',
-      senderPhone: '',
+      businessName: '',
+      vatNumber: '',
+      taxCode: '',
+      address: '',
+      city: '',
+      zipCode: '',
+      province: '',
+      country: 'IT',
+      taxRegime: 'FORFETTARIO',
+      senderType: 'LIBERO_PROFESSIONISTA',
     },
   });
 
@@ -59,7 +71,18 @@ export function SettingsForm({ onSettingsChange }: SettingsFormProps) {
       const res = await fetch('/api/settings');
       if (res.ok) {
         const data = await res.json();
-        form.reset(data);
+        form.reset({
+          businessName: data.senderName || '',
+          vatNumber: data.senderVat || '',
+          taxCode: data.senderTaxCode || '',
+          address: data.senderAddress || '',
+          city: data.senderCity || '',
+          zipCode: data.senderZip || '',
+          province: data.senderProvince || '',
+          country: data.senderCountry || 'IT',
+          taxRegime: data.senderTaxRegime || 'FORFETTARIO',
+          senderType: data.senderType || 'LIBERO_PROFESSIONISTA',
+        });
       }
     } catch (error) {
       console.error('Error fetching settings:', error);
@@ -110,105 +133,117 @@ export function SettingsForm({ onSettingsChange }: SettingsFormProps) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-          <div className="border-t pt-6">
-            <h3 className="text-lg font-semibold mb-4">Dati Anagrafici</h3>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <Label htmlFor="senderName">Denominazione / Ragione Sociale *</Label>
-                <Input id="senderName" {...form.register('senderName')} />
-                {form.formState.errors.senderName && (
-                  <p className="text-sm text-red-500">{form.formState.errors.senderName.message}</p>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+          <div className="space-y-6 border-t pt-8">
+            <h3 className="text-lg font-semibold mb-5">Dati Anagrafici</h3>
+            <div className="grid gap-x-5 gap-y-6 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="businessName">Denominazione / Ragione Sociale *</Label>
+                <Input id="businessName" {...form.register('businessName')} />
+                {form.formState.errors.businessName && (
+                  <p className="text-sm text-red-500">{form.formState.errors.businessName.message}</p>
                 )}
               </div>
-              <div>
-                <Label htmlFor="senderVat">Partita IVA *</Label>
-                <Input id="senderVat" {...form.register('senderVat')} placeholder="12345678901" maxLength={11} />
-                {form.formState.errors.senderVat && (
-                  <p className="text-sm text-red-500">{form.formState.errors.senderVat.message}</p>
-                )}
-              </div>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <Label htmlFor="senderTaxCode">Codice Fiscale *</Label>
-                <Input id="senderTaxCode" {...form.register('senderTaxCode')} placeholder="RSSMRA80A01H501U" maxLength={16} />
-                {form.formState.errors.senderTaxCode && (
-                  <p className="text-sm text-red-500">{form.formState.errors.senderTaxCode.message}</p>
+              <div className="space-y-2">
+                <Label htmlFor="vatNumber">Partita IVA *</Label>
+                <Input id="vatNumber" {...form.register('vatNumber')} placeholder="12345678901" maxLength={11} />
+                {form.formState.errors.vatNumber && (
+                  <p className="text-sm text-red-500">{form.formState.errors.vatNumber.message}</p>
                 )}
               </div>
             </div>
-          </div>
-
-          <Separator />
-
-          <div className="border-t pt-6">
-            <h3 className="text-lg font-semibold mb-4">Sede Legale</h3>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <Label htmlFor="senderAddress">Indirizzo *</Label>
-                <Input id="senderAddress" {...form.register('senderAddress')} />
-                {form.formState.errors.senderAddress && (
-                  <p className="text-sm text-red-500">{form.formState.errors.senderAddress.message}</p>
+            <div className="grid gap-x-5 gap-y-6 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="taxCode">Codice Fiscale *</Label>
+                <Input id="taxCode" {...form.register('taxCode')} placeholder="RSSMRA80A01H501U" maxLength={16} />
+                {form.formState.errors.taxCode && (
+                  <p className="text-sm text-red-500">{form.formState.errors.taxCode.message}</p>
                 )}
               </div>
-              <div>
-                <Label htmlFor="senderNumber">Numero Civico *</Label>
-                <Input id="senderNumber" {...form.register('senderNumber')} />
-                {form.formState.errors.senderNumber && (
-                  <p className="text-sm text-red-500">{form.formState.errors.senderNumber.message}</p>
+              <div className="space-y-2">
+                <Label htmlFor="senderType">Tipologia Soggetto *</Label>
+                <Select value={form.watch('senderType')} onValueChange={(v) => form.setValue('senderType', v as 'LIBERO_PROFESSIONISTA' | 'DITTA_INDIVIDUALE' | 'SOCIETA')} required>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="LIBERO_PROFESSIONISTA">Libero Professionista</SelectItem>
+                    <SelectItem value="DITTA_INDIVIDUALE">Ditta Individuale</SelectItem>
+                    <SelectItem value="SOCIETA">Società</SelectItem>
+                  </SelectContent>
+                </Select>
+                {form.formState.errors.senderType && (
+                  <p className="text-sm text-red-500">{form.formState.errors.senderType.message}</p>
                 )}
               </div>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-4">
-              <div>
-                <Label htmlFor="senderZip">CAP *</Label>
-                <Input id="senderZip" {...form.register('senderZip')} maxLength={5} />
-                {form.formState.errors.senderZip && (
-                  <p className="text-sm text-red-500">{form.formState.errors.senderZip.message}</p>
+              <div className="space-y-2">
+                <Label htmlFor="taxRegime">Regime Fiscale *</Label>
+                <Select value={form.watch('taxRegime')} onValueChange={(v) => form.setValue('taxRegime', v as 'FORFETTARIO' | 'ORDINARIO')} required>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="FORFETTARIO">Forfettario</SelectItem>
+                    <SelectItem value="ORDINARIO">Ordinario</SelectItem>
+                  </SelectContent>
+                </Select>
+                {form.formState.errors.taxRegime && (
+                  <p className="text-sm text-red-500">{form.formState.errors.taxRegime.message}</p>
                 )}
-              </div>
-              <div>
-                <Label htmlFor="senderCity">Comune *</Label>
-                <Input id="senderCity" {...form.register('senderCity')} />
-                {form.formState.errors.senderCity && (
-                  <p className="text-sm text-red-500">{form.formState.errors.senderCity.message}</p>
-                )}
-              </div>
-              <div>
-                <Label htmlFor="senderProvince">Provincia *</Label>
-                <Input id="senderProvince" {...form.register('senderProvince')} maxLength={2} placeholder="RM" />
-                {form.formState.errors.senderProvince && (
-                  <p className="text-sm text-red-500">{form.formState.errors.senderProvince.message}</p>
-                )}
-              </div>
-              <div>
-                <Label htmlFor="senderCountry">Nazione</Label>
-                <Input id="senderCountry" value="IT" readOnly className="bg-muted" />
               </div>
             </div>
           </div>
 
           <Separator />
 
-          <div className="border-t pt-6">
-            <h3 className="text-lg font-semibold mb-4">Contatti (opzionali)</h3>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <Label htmlFor="senderEmail">Email</Label>
-                <Input id="senderEmail" type="email" {...form.register('senderEmail')} />
-                {form.formState.errors.senderEmail && (
-                  <p className="text-sm text-red-500">{form.formState.errors.senderEmail.message}</p>
+          <div className="space-y-6 border-t pt-8">
+            <h3 className="text-lg font-semibold mb-5">Sede Legale</h3>
+            <div className="grid gap-x-5 gap-y-6 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="address">Indirizzo *</Label>
+                <Input id="address" {...form.register('address')} />
+                {form.formState.errors.address && (
+                  <p className="text-sm text-red-500">{form.formState.errors.address.message}</p>
                 )}
               </div>
-              <div>
-                <Label htmlFor="senderPhone">Telefono</Label>
-                <Input id="senderPhone" {...form.register('senderPhone')} />
+              <div className="space-y-2">
+                <Label htmlFor="city">Comune *</Label>
+                <Input id="city" {...form.register('city')} />
+                {form.formState.errors.city && (
+                  <p className="text-sm text-red-500">{form.formState.errors.city.message}</p>
+                )}
+              </div>
+            </div>
+            <div className="grid gap-x-5 gap-y-6 sm:grid-cols-4">
+              <div className="space-y-2">
+                <Label htmlFor="zipCode">CAP *</Label>
+                <Input id="zipCode" {...form.register('zipCode')} maxLength={5} />
+                {form.formState.errors.zipCode && (
+                  <p className="text-sm text-red-500">{form.formState.errors.zipCode.message}</p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="province">Provincia *</Label>
+                <Input id="province" {...form.register('province')} maxLength={2} placeholder="RM" />
+                {form.formState.errors.province && (
+                  <p className="text-sm text-red-500">{form.formState.errors.province.message}</p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="country">Nazione</Label>
+                <Select value={form.watch('country')} onValueChange={(v) => form.setValue('country', v)} required disabled>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="IT">Italia</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-4 border-t">
+          <div className="flex justify-end gap-3 pt-6 border-t">
             <Button type="submit" disabled={saved}>
               {saved ? (
                 <>

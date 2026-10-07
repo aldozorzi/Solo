@@ -10,10 +10,15 @@ const invoiceItemSchema = z.object({
   amount: z.number().positive(),
 });
 
+const dateInputSchema = z.string().min(1, 'Data obbligatoria').refine(
+  (v) => !Number.isNaN(Date.parse(v)),
+  { message: 'Data non valida' }
+);
+
 const invoiceSchema = z.object({
   clientId: z.string().min(1, 'Cliente obbligatorio'),
-  date: z.string().datetime(),
-  paymentIds: z.array(z.string()).min(1, 'Almeno un pagamento richiesto'),
+  date: dateInputSchema,
+  paymentIds: z.array(z.string()).default([]),
   items: z.array(invoiceItemSchema).min(1, 'Almeno una riga fattura richiesta'),
   notes: z.string().optional(),
 });
@@ -29,7 +34,7 @@ async function getUserId(): Promise<string> {
 async function getUserWithTaxRegime(userId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { taxRegime: true },
+    select: { taxRegime: true, senderType: true },
   });
   if (!user) {
     throw new Error('Utente non trovato');
@@ -104,6 +109,7 @@ export async function POST(request: NextRequest) {
       subtotal,
       clientType: client.type,
       taxRegime: user.taxRegime,
+      senderType: user.senderType,
     });
 
     const lastInvoice = await prisma.invoice.findFirst({
@@ -120,6 +126,7 @@ export async function POST(request: NextRequest) {
         year,
         date: new Date(data.date),
         userId,
+        status: 'DRAFT',
         clientId: data.clientId,
         subtotalAmount: totals.subtotal,
         stampDutyAmount: totals.stampDutyAmount,

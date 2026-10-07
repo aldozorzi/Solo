@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .mezzanotte, .tramonto, .mezzanotte *, .tramonto *));
+
 :root {
   --background: #ffffff;
   --foreground: #0f172a;
@@ -48,28 +50,75 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0f172a;
-    --foreground: #f8fafc;
-    --card: #1e293b;
-    --card-foreground: #f8fafc;
-    --popover: #1e293b;
-    --popover-foreground: #f8fafc;
-    --primary: #3b82f6;
-    --primary-foreground: #ffffff;
-    --secondary: #334155;
-    --secondary-foreground: #f8fafc;
-    --muted: #334155;
-    --muted-foreground: #94a3b8;
-    --accent: #334155;
-    --accent-foreground: #f8fafc;
-    --destructive: #ef4444;
-    --destructive-foreground: #ffffff;
-    --border: #334155;
-    --input: #334155;
-    --ring: #3b82f6;
-  }
+.dark,
+.mezzanotte {
+  color-scheme: dark;
+  --background: #0f172a;
+  --foreground: #f8fafc;
+  --card: #1e293b;
+  --card-foreground: #f8fafc;
+  --popover: #1e293b;
+  --popover-foreground: #f8fafc;
+  --primary: #3b82f6;
+  --primary-foreground: #ffffff;
+  --secondary: #334155;
+  --secondary-foreground: #f8fafc;
+  --muted: #334155;
+  --muted-foreground: #94a3b8;
+  --accent: #334155;
+  --accent-foreground: #f8fafc;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: #334155;
+  --input: #334155;
+  --ring: #3b82f6;
+}
+
+.light,
+.aurora {
+  color-scheme: light;
+  --background: #fff7ed;
+  --foreground: #431407;
+  --card: #ffffff;
+  --card-foreground: #431407;
+  --popover: #ffffff;
+  --popover-foreground: #431407;
+  --primary: #be123c;
+  --primary-foreground: #ffffff;
+  --secondary: #fce7f3;
+  --secondary-foreground: #831843;
+  --muted: #fef3c7;
+  --muted-foreground: #92400e;
+  --accent: #fce7f3;
+  --accent-foreground: #831843;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --border: #fbcfe8;
+  --input: #fbcfe8;
+  --ring: #e11d48;
+}
+
+.tramonto {
+  color-scheme: dark;
+  --background: #000000;
+  --foreground: #ffffff;
+  --card: #050505;
+  --card-foreground: #ffffff;
+  --popover: #050505;
+  --popover-foreground: #ffffff;
+  --primary: #ffb000;
+  --primary-foreground: #000000;
+  --secondary: #161006;
+  --secondary-foreground: #ffffff;
+  --muted: #161006;
+  --muted-foreground: #f5f5f5;
+  --accent: #161006;
+  --accent-foreground: #ffffff;
+  --destructive: #ff5252;
+  --destructive-foreground: #000000;
+  --border: #3a2a00;
+  --input: #3a2a00;
+  --ring: #ffb000;
 }
 
 * {
@@ -87,24 +136,268 @@ body {
   background: linear-gradient(135deg, #f8fafc 0%, #e0e7ff 50%, #c7d2fe 100%);
 }
 
-.dark .bg-gradient-app {
+.dark .bg-gradient-app,
+.mezzanotte .bg-gradient-app {
   background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #312e81 100%);
 }
 
+.light .bg-gradient-app,
+.aurora .bg-gradient-app {
+  background: linear-gradient(135deg, #fff1f2 0%, #ffe4e6 45%, #fef3c7 100%);
+}
+
+.tramonto .bg-gradient-app {
+  background: #000000;
+}
+
+.tramonto h1,
+.tramonto h2,
+.tramonto h3,
+.tramonto h4,
+.tramonto h5,
+.tramonto h6,
+.tramonto th,
+.tramonto .dashboard-title,
+.tramonto .dashboard-amount {
+  color: #ffb000 !important;
+}
+
 .panel-translucent {
-  background: rgba(255, 255, 255, 0.7);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: var(--card);
+  border: 1px solid var(--border);
 }
 
 .dark .panel-translucent {
-  background: rgba(30, 41, 59, 0.7);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(51, 65, 85, 0.5);
+  background: var(--card);
+  border: 1px solid var(--border);
 }
 
 .panel-card {
-  @apply bg-card/80 backdrop-blur-sm border-border/50 shadow-lg;
+  @apply bg-card border-border/50 shadow-lg;
+}
+
+.main-nav {
+  @apply flex h-10 items-center gap-1 overflow-x-auto rounded-xl border p-1 shadow-sm;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  background: linear-gradient(to right, #f1f5f9, #e2e8f0);
+}
+
+.main-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.main-nav {
+  color: #475569;
+  border-color: rgba(226, 232, 240, 0.5);
+}
+
+.dark .main-nav {
+  background: linear-gradient(to right, #1e293b, #334155);
+  color: #cbd5e1;
+  border-color: rgba(51, 65, 85, 0.5);
+}
+
+.mezzanotte .main-nav {
+  background: rgb(30, 41, 59);
+  color: #cbd5e1;
+  border-color: rgba(51, 65, 85, 0.5);
+}
+
+.light .main-nav {
+  background: linear-gradient(to right, #fce7f3, #fef3c7);
+  color: #831843;
+  border-color: rgba(251, 207, 232, 0.7);
+}
+
+.aurora .main-nav {
+  background: none;
+  color: #831843;
+  border-color: rgba(251, 207, 232, 0.7);
+}
+
+.tramonto .main-nav {
+  background: #050505;
+  color: #ffb000;
+  border-color: #3a2a00;
+  box-shadow: none;
+}
+
+.main-nav-item {
+  @apply inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-1.5 text-sm font-medium transition-all duration-200 outline-none;
+}
+
+.main-nav-item-active {
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--primary);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.15);
+}
+
+.dark .main-nav-item-active,
+.mezzanotte .main-nav-item-active {
+  background: rgba(30, 41, 59, 0.8);
+  color: #60a8fa;
+}
+
+.light .main-nav-item-active,
+.aurora .main-nav-item-active {
+  background: rgba(255, 255, 255, 0.9);
+  color: #be123c;
+}
+
+.tramonto .main-nav-item-active {
+  background: #161006;
+  color: #ffb000;
+  box-shadow: none;
+}
+
+.stat-tile {
+  @apply flex h-10 w-10 items-center justify-center rounded-xl;
+}
+
+.stat-tile-payments {
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+}
+
+.stat-tile-invoices {
+  background: rgba(59, 130, 246, 0.1);
+  color: #2563eb;
+}
+
+.dark .stat-tile-payments,
+.mezzanotte .stat-tile-payments {
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
+}
+
+.dark .stat-tile-invoices,
+.mezzanotte .stat-tile-invoices {
+  background: rgba(59, 130, 246, 0.18);
+  color: #60a8fa;
+}
+
+.light .stat-tile-payments,
+.aurora .stat-tile-payments {
+  background: rgba(16, 185, 129, 0.12);
+  color: #047857;
+}
+
+.light .stat-tile-invoices,
+.aurora .stat-tile-invoices {
+  background: rgba(225, 29, 72, 0.1);
+  color: #be123c;
+}
+
+.tramonto .stat-tile {
+  background: rgba(255, 176, 0, 0.1);
+  color: #ffb000;
+  border: 1px solid #3a2a00;
+}
+
+.attention-badge {
+  @apply inline-flex items-center rounded-md border border-transparent px-2.5 py-0.5 text-xs font-semibold shadow transition-colors;
+  background: #f59e0b;
+  color: #ffffff;
+}
+
+.attention-badge:hover {
+  background: rgba(245, 158, 11, 0.9);
+}
+
+.tramonto .attention-badge {
+  background: transparent;
+  color: #ffb000;
+  border-color: #ffb000;
+  box-shadow: none;
+}
+
+.payment-option {
+  @apply flex items-center gap-2 rounded cursor-pointer;
+}
+
+.payment-option:hover {
+  background: var(--accent);
+}
+
+.warning-text {
+  @apply text-sm;
+  color: #92400e;
+}
+
+.dark .warning-text,
+.mezzanotte .warning-text {
+  color: #fcd34d;
+}
+
+.light .warning-text,
+.aurora .warning-text {
+  color: #92400e;
+}
+
+.tramonto .warning-text {
+  color: #ffb000;
+}
+
+.alert-box {
+  @apply flex items-start gap-2 rounded-lg border p-3 text-sm;
+}
+
+.alert-warning {
+  background: #fffbeb;
+  color: #92400e;
+  border-color: #fcd34d;
+}
+
+.dark .alert-warning,
+.mezzanotte .alert-warning {
+  background: rgba(251, 191, 36, 0.12);
+  color: #fcd34d;
+  border-color: rgba(251, 191, 36, 0.35);
+}
+
+.tramonto .alert-warning {
+  background: transparent;
+  color: #ffb000;
+  border-color: #ffb000;
+}
+
+.alert-error {
+  background: #fef2f2;
+  color: #dc2626;
+  border-color: #fecaca;
+}
+
+.dark .alert-error,
+.mezzanotte .alert-error {
+  background: rgba(239, 68, 68, 0.12);
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+.tramonto .alert-error {
+  background: transparent;
+  color: #ff5a5a;
+  border-color: #5a1a1a;
+}
+
+.alert-success {
+  background: #f0fdf4;
+  color: #15803d;
+  border-color: #bbf7d0;
+}
+
+.dark .alert-success,
+.mezzanotte .alert-success {
+  background: rgba(34, 197, 94, 0.12);
+  color: #86efac;
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.tramonto .alert-success {
+  background: transparent;
+  color: #4ade80;
+  border-color: #14532d;
 }
 
 .tabular-nums {
@@ -127,4 +420,13 @@ body {
 
 .animate-slide-up {
   animation: slide-up 0.3s ease-out;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
 }

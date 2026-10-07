@@ -7,10 +7,11 @@ import {
   ClientType, 
   InvoiceStatus,
   TaxRegime,
-  UserRole 
+  UserRole,
+  SenderType
 } from '@prisma/client';
 
-export type { Client, Invoice, InvoiceItem, Payment, User, ClientType, InvoiceStatus, TaxRegime, UserRole };
+export type { Client, Invoice, InvoiceItem, Payment, User, ClientType, InvoiceStatus, TaxRegime, UserRole, SenderType };
 
 export type InvoiceWithRelations = Invoice & {
   client: Client;
@@ -46,6 +47,7 @@ export type UserSession = {
   country: string;
   province?: string | null;
   taxRegime: TaxRegime;
+  senderType: SenderType;
 };
 
 export const CLIENT_TYPE_LABELS: Record<ClientType, string> = {

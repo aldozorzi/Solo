@@ -44,36 +44,22 @@ interface ClientFormProps {
 
 export function ClientForm({ client, onSuccess }: ClientFormProps) {
   const isEditing = !!client;
-  const [open, setOpen] = useState(!isEditing);
+  const [open, setOpen] = useState(false);
 
   const form = useForm<ClientFormData>({
     resolver: zodResolver(clientSchema) as any,
     defaultValues: {
-      name: '',
-      type: 'EXTRA_EU',
-      vatNumber: '',
-      taxCode: '',
-      sdiCode: '',
-      address: '',
-      city: '',
-      zipCode: '',
-      country: 'US',
+      name: client?.name || '',
+      type: client?.type || 'EXTRA_EU',
+      vatNumber: client?.vatNumber || '',
+      taxCode: client?.taxCode || '',
+      sdiCode: client?.sdiCode || '',
+      address: client?.address || '',
+      city: client?.city || '',
+      zipCode: client?.zipCode || '',
+      country: client?.country || 'US',
     },
   });
-
-  if (client) {
-    form.reset({
-      name: client.name,
-      type: client.type,
-      vatNumber: client.vatNumber || '',
-      taxCode: client.taxCode || '',
-      sdiCode: client.sdiCode || '',
-      address: client.address || '',
-      city: client.city || '',
-      zipCode: client.zipCode || '',
-      country: client.country,
-    });
-  }
 
   const onSubmit = async (data: ClientFormData) => {
     try {
@@ -110,9 +96,11 @@ export function ClientForm({ client, onSuccess }: ClientFormProps) {
   const handleTypeChange = (type: ClientType) => {
     form.setValue('type', type);
     const defaults = CLIENT_TYPE_SDI_DEFAULTS[type];
-    form.setValue('sdiCode', defaults.sdiCode);
-    form.setValue('zipCode', defaults.zipCode);
-    form.setValue('country', type === 'ITALY' ? 'IT' : 'US');
+    if (defaults) {
+      form.setValue('sdiCode', defaults.sdiCode);
+      form.setValue('zipCode', defaults.zipCode);
+      form.setValue('country', type === 'ITALY' ? 'IT' : 'US');
+    }
   };
 
   if (isEditing) {

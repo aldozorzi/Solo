@@ -25,6 +25,12 @@ enum InvoiceStatus {
   CANCELLED
 }
 
+enum SenderType {
+  LIBERO_PROFESSIONISTA
+  DITTA_INDIVIDUALE
+  SOCIETA
+}
+
 enum UserRole {
   ADMIN
   USER
@@ -46,6 +52,7 @@ model User {
   country       String      @default("IT")
   province      String?
   taxRegime     TaxRegime   @default(FORFETTARIO)
+  senderType    SenderType  @default(LIBERO_PROFESSIONISTA)
   
   clients       Client[]
   payments      Payment[]
@@ -121,12 +128,14 @@ model Payment {
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   clientId    String
   client      Client    @relation(fields: [clientId], references: [id])
-  amount      Decimal   @db.Decimal(10, 2)
-  currency    String    @default("EUR")
-  paidAt      DateTime
-  description String
-  invoiceId   String?
-  invoice     Invoice?  @relation(fields: [invoiceId], references: [id])
+  amount           Decimal   @db.Decimal(10, 2)
+  currency         String    @default("EUR")
+  originalAmount   Decimal?  @db.Decimal(10, 2)
+  originalCurrency String?
+  paidAt           DateTime
+  description      String
+  invoiceId        String?
+  invoice          Invoice?  @relation(fields: [invoiceId], references: [id])
   
   createdAt   DateTime  @default(now())
 

@@ -46,6 +46,7 @@ export const authOptions: NextAuthOptions = {
           country: user.country,
           province: user.province,
           taxRegime: user.taxRegime,
+          senderType: user.senderType,
         };
       },
     }),
@@ -68,6 +69,7 @@ export const authOptions: NextAuthOptions = {
         token.country = (user as any).country;
         token.province = (user as any).province;
         token.taxRegime = (user as any).taxRegime;
+        token.senderType = (user as any).senderType;
       }
       return token;
     },
@@ -84,6 +86,7 @@ export const authOptions: NextAuthOptions = {
         (session.user as any).country = token.country;
         (session.user as any).province = token.province;
         (session.user as any).taxRegime = token.taxRegime;
+        (session.user as any).senderType = token.senderType;
       }
       return session;
     },

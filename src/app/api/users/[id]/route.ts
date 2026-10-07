@@ -4,14 +4,27 @@ import { prisma } from '@/lib/prisma';
 import { z } from 'zod';
 import { hashPassword } from '@/lib/auth';
 import { authOptions } from '@/lib/auth';
+import { isValidCodiceFiscale, isValidPartitaIVA } from '@/lib/fiscal-code';
 
 const userUpdateSchema = z.object({
   name: z.string().min(1).optional(),
   email: z.string().email().optional(),
   role: z.enum(['ADMIN', 'USER']).optional(),
   businessName: z.string().min(1).optional(),
-  vatNumber: z.string().length(11).optional(),
-  taxCode: z.string().length(16).optional(),
+  vatNumber: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .length(11, 'Partita IVA deve essere 11 cifre')
+    .refine(isValidPartitaIVA, { message: 'Partita IVA non valida (codice di controllo errato)' })
+    .optional(),
+  taxCode: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .length(16, 'Codice Fiscale deve essere 16 caratteri')
+    .refine(isValidCodiceFiscale, { message: 'Codice Fiscale non valido (codice di controllo errato)' })
+    .optional(),
   address: z.string().min(1).optional(),
   city: z.string().min(1).optional(),
   zipCode: z.string().length(5).optional(),
@@ -135,7 +148,10 @@ export async function PUT(
     return NextResponse.json(user);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return NextResponse.json({ error: error.issues }, { status: 400 });
+      return NextResponse.json(
+        { error: error.issues.map((issue) => issue.message).join('; ') },
+        { status: 400 }
+      );
     }
     if (error instanceof Error && error.message === 'Non autenticato') {
       return NextResponse.json({ error: error.message }, { status: 401 });

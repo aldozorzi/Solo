@@ -2,6 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // Permette al dev server (HMR WebSocket incluso) di servire dispositivi
+  // nella rete locale, es. telefono su http://192.168.8.x:3000.
+  // Solo sviluppo: in produzione questa opzione è ignorata.
+  allowedDevOrigins: ["192.168.8.*"],
   experimental: {
     serverActions: {
       bodySizeLimit: '2mb',

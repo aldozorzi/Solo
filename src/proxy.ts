@@ -7,7 +7,7 @@ export const config = {
   ],
 };
 
-export default async function middleware(req: NextRequest) {
+export default async function proxy(req: NextRequest) {
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
   const path = req.nextUrl.pathname;
   const method = req.method;
@@ -20,6 +20,11 @@ export default async function middleware(req: NextRequest) {
   }
 
   if (path === "/api/users" && method === "POST") {
+    return new Response(null, { status: 200, headers: { "x-middleware-next": "1" } });
+  }
+
+  // Login nativo (senza JS): deve passare senza sessione, come la registrazione.
+  if (path === "/api/login" && method === "POST") {
     return new Response(null, { status: 200, headers: { "x-middleware-next": "1" } });
   }
 

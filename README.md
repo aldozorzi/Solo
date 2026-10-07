@@ -63,6 +63,16 @@ npx prisma db push
 npm run dev
 ```
 
+## Test matrice XML
+
+La suite usa un database PostgreSQL temporaneo e non modifica i dati reali.
+Dettagli completi in [`tests/README.md`](tests/README.md).
+
+```bash
+npm run test:xml        # solo verifica testuale, senza file
+npm run test:xml:files  # verifica testuale più 36 XML in test-output/
+```
+
 ## Variabili d'Ambiente
 
 | Variabile | Descrizione | Obbligatoria |

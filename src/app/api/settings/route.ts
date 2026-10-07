@@ -3,17 +3,29 @@ import { getServerSession } from 'next-auth';
 import { prisma } from '@/lib/prisma';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
+import { isValidCodiceFiscale, isValidPartitaIVA } from '@/lib/fiscal-code';
 
 const userSettingsSchema = z.object({
   businessName: z.string().min(1, 'Denominazione obbligatoria'),
-  vatNumber: z.string().length(11, 'Partita IVA deve essere 11 cifre'),
-  taxCode: z.string().length(16, 'Codice Fiscale deve essere 16 caratteri'),
+  vatNumber: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .length(11, 'Partita IVA deve essere 11 cifre')
+    .refine(isValidPartitaIVA, { message: 'Partita IVA non valida (codice di controllo errato)' }),
+  taxCode: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .length(16, 'Codice Fiscale deve essere 16 caratteri')
+    .refine(isValidCodiceFiscale, { message: 'Codice Fiscale non valido (codice di controllo errato)' }),
   address: z.string().min(1, 'Indirizzo obbligatorio'),
   city: z.string().min(1, 'Comune obbligatorio'),
   zipCode: z.string().length(5, 'CAP deve essere 5 cifre'),
   province: z.string().length(2, 'Provincia (sigla, 2 caratteri)'),
   country: z.string().default('IT'),
   taxRegime: z.enum(['FORFETTARIO', 'ORDINARIO']),
+  senderType: z.enum(['LIBERO_PROFESSIONISTA', 'DITTA_INDIVIDUALE', 'SOCIETA']),
 });
 
 async function getUserId(): Promise<string> {
@@ -40,6 +52,7 @@ export async function GET() {
         province: true,
         country: true,
         taxRegime: true,
+        senderType: true,
       },
     });
     
@@ -58,6 +71,7 @@ export async function GET() {
       senderProvince: user.province || 'RM',
       senderCountry: user.country,
       senderTaxRegime: user.taxRegime,
+      senderType: user.senderType,
     });
   } catch (error) {
     if (error instanceof Error && error.message === 'Non autenticato') {
@@ -86,6 +100,7 @@ export async function PUT(request: NextRequest) {
         province: data.province,
         country: data.country,
         taxRegime: data.taxRegime,
+        senderType: data.senderType,
       },
       select: {
         businessName: true,
@@ -97,6 +112,7 @@ export async function PUT(request: NextRequest) {
         province: true,
         country: true,
         taxRegime: true,
+        senderType: true,
       },
     });
     
@@ -111,10 +127,14 @@ export async function PUT(request: NextRequest) {
       senderProvince: user.province || 'RM',
       senderCountry: user.country,
       senderTaxRegime: user.taxRegime,
+      senderType: user.senderType,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return NextResponse.json({ error: error.issues }, { status: 400 });
+      return NextResponse.json(
+        { error: { message: error.issues.map((issue) => issue.message).join('; ') } },
+        { status: 400 }
+      );
     }
     if (error instanceof Error && error.message === 'Non autenticato') {
       return NextResponse.json({ error: error.message }, { status: 401 });

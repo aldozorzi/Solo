@@ -4,11 +4,18 @@ import { prisma } from '@/lib/prisma';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 
+const dateInputSchema = z.string().min(1, 'Data obbligatoria').refine(
+  (v) => !Number.isNaN(Date.parse(v)),
+  { message: 'Data non valida' }
+);
+
 const paymentSchema = z.object({
   clientId: z.string().min(1, 'Cliente obbligatorio'),
   amount: z.number().positive('Importo deve essere positivo'),
   currency: z.string().default('EUR'),
-  paidAt: z.string().datetime(),
+  originalAmount: z.number().positive('Importo deve essere positivo').optional(),
+  originalCurrency: z.string().min(1).max(3).optional(),
+  paidAt: dateInputSchema,
   description: z.string().min(1, 'Descrizione obbligatoria'),
   invoiceId: z.string().optional(),
 });
@@ -71,9 +78,13 @@ export async function POST(request: NextRequest) {
 
     await verifyClientOwnership(userId, data.clientId);
 
+    const originalCurrency = (data.originalCurrency || '').trim().toUpperCase() || undefined;
+
     const payment = await prisma.payment.create({
       data: {
         ...data,
+        originalCurrency:
+          data.originalAmount !== undefined && originalCurrency ? originalCurrency : undefined,
         userId,
         paidAt: new Date(data.paidAt),
       },

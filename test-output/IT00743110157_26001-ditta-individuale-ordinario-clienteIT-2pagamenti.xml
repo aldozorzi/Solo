@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FatturaElettronica xmlns="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" versione="FPR12" SistemaEmittente="Solo">
+  <FatturaElettronicaHeader xmlns="">
+    <DatiTrasmissione xmlns="">
+      <IdTrasmittente>
+        <IdPaese>IT</IdPaese>
+        <IdCodice>00743110157</IdCodice>
+      </IdTrasmittente>
+      <ProgressivoInvio>26002</ProgressivoInvio>
+      <FormatoTrasmissione>FPR12</FormatoTrasmissione>
+      <CodiceDestinatario>0000000</CodiceDestinatario>
+      <ContattiTrasmittente>
+        <Email>xml-matrix-muy5obqy_mwv_b40ce851-ditta_individuale-ordinario@example.com</Email>
+      </ContattiTrasmittente>
+    </DatiTrasmissione>
+    <CedentePrestatore xmlns="">
+      <DatiAnagrafici>
+        <IdFiscaleIVA>
+          <IdPaese>IT</IdPaese>
+          <IdCodice>00743110157</IdCodice>
+        </IdFiscaleIVA>
+        <CodiceFiscale>ZRZLDA82M09D969K</CodiceFiscale>
+        <Anagrafica>
+          <Denominazione>XML Matrix DITTA_INDIVIDUALE ORDINARIO</Denominazione>
+        </Anagrafica>
+        <RegimeFiscale>RF01</RegimeFiscale>
+      </DatiAnagrafici>
+      <Sede>
+        <Indirizzo>Via Test 1</Indirizzo>
+        <NumeroCivico>SNC</NumeroCivico>
+        <CAP>10100</CAP>
+        <Comune>Torino</Comune>
+        <Provincia>TO</Provincia>
+        <Nazione>IT</Nazione>
+      </Sede>
+      <Contatti>
+        <Email>xml-matrix-muy5obqy_mwv_b40ce851-ditta_individuale-ordinario@example.com</Email>
+      </Contatti>
+    </CedentePrestatore>
+    <CessionarioCommittente xmlns="">
+      <DatiAnagrafici>
+        <IdFiscaleIVA>
+          <IdPaese>IT</IdPaese>
+          <IdCodice>09721440011</IdCodice>
+        </IdFiscaleIVA>
+        <CodiceFiscale>09721440011</CodiceFiscale>
+        <Anagrafica>
+          <Denominazione>Cliente Italia</Denominazione>
+        </Anagrafica>
+      </DatiAnagrafici>
+      <Sede>
+        <Indirizzo>Via Roma 1</Indirizzo>
+        <NumeroCivico>SNC</NumeroCivico>
+        <CAP>10100</CAP>
+        <Comune>Torino</Comune>
+        <Provincia>TO</Provincia>
+        <Nazione>IT</Nazione>
+      </Sede>
+    </CessionarioCommittente>
+  </FatturaElettronicaHeader>
+  <FatturaElettronicaBody xmlns="">
+    <DatiGenerali xmlns="">
+      <DatiGeneraliDocumento>
+        <TipoDocumento>TD01</TipoDocumento>
+        <Divisa>EUR</Divisa>
+        <Data>2026-10-07</Data>
+        <Numero>2</Numero>
+        <ImportoTotaleDocumento>649.58</ImportoTotaleDocumento>
+        <Causale>Operazione soggetta ad IVA 22% - Regime ordinario</Causale>
+      </DatiGeneraliDocumento>
+    </DatiGenerali>
+    <DatiBeniServizi xmlns="">
+      <DettaglioLinee>
+        <NumeroLinea>1</NumeroLinea>
+        <Descrizione>Servizio di consulenza</Descrizione>
+        <Quantita>1.00</Quantita>
+        <UnitaMisura>NR</UnitaMisura>
+        <PrezzoUnitario>532.44</PrezzoUnitario>
+        <PrezzoTotale>532.44</PrezzoTotale>
+        <AliquotaIVA>22.00</AliquotaIVA>
+      </DettaglioLinee>
+      <DatiRiepilogo>
+        <AliquotaIVA>22.00</AliquotaIVA>
+        <ImponibileImporto>532.44</ImponibileImporto>
+        <Imposta>117.14</Imposta>
+        <EsigibilitaIVA>I</EsigibilitaIVA>
+      </DatiRiepilogo>
+    </DatiBeniServizi>
+    <DatiPagamento xmlns="">
+      <CondizioniPagamento>TP01</CondizioniPagamento>
+      <DettaglioPagamento>
+        <ModalitaPagamento>MP05</ModalitaPagamento>
+        <DataRiferimentoTerminiPagamento>2026-10-06</DataRiferimentoTerminiPagamento>
+        <DataScadenzaPagamento>2026-10-06</DataScadenzaPagamento>
+        <ImportoPagamento>324.79</ImportoPagamento>
+      </DettaglioPagamento>
+      <DettaglioPagamento>
+        <ModalitaPagamento>MP05</ModalitaPagamento>
+        <DataRiferimentoTerminiPagamento>2026-10-13</DataRiferimentoTerminiPagamento>
+        <DataScadenzaPagamento>2026-10-13</DataScadenzaPagamento>
+        <ImportoPagamento>324.79</ImportoPagamento>
+      </DettaglioPagamento>
+    </DatiPagamento>
+  </FatturaElettronicaBody>
+</FatturaElettronica>

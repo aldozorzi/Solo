@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -15,6 +15,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { format } from 'date-fns';
 import { Plus, Trash2, X } from 'lucide-react';
 import { PaymentWithRelations, Client } from '@/types';
+import { formatDualAmountShort } from '@/lib/tax';
 
 const invoiceItemSchema = z.object({
   description: z.string().min(1, 'Descrizione obbligatoria'),
@@ -24,7 +25,7 @@ const invoiceItemSchema = z.object({
 const invoiceSchema = z.object({
   clientId: z.string().min(1, 'Cliente obbligatorio'),
   date: z.string().min(1, 'Data obbligatoria'),
-  paymentIds: z.array(z.string()).min(1, 'Seleziona almeno un incasso'),
+  paymentIds: z.array(z.string()).default([]),
   items: z.array(invoiceItemSchema).min(1, 'Almeno una riga fattura'),
 });
 
@@ -57,9 +58,20 @@ export function InvoiceForm({ clients, pendingPayments, onSuccess }: InvoiceForm
 
   const clientPayments = pendingPayments.filter(p => p.clientId === form.watch('clientId'));
   const selectedPayments = form.watch('paymentIds');
-  const totalAmount = clientPayments
+  const watchedItems = form.watch('items');
+  const paymentsTotal = clientPayments
     .filter(p => selectedPayments.includes(p.id))
     .reduce((sum, p) => sum + Number(p.amount), 0);
+  const linesTotal = (watchedItems || []).reduce((sum, it) => sum + (Number(it.amount) || 0), 0);
+  const totalsMismatch = selectedPayments.length > 0 && Math.abs(linesTotal - paymentsTotal) >= 0.005;
+
+  // Con una sola riga e incassi selezionati, l'importo segue in automatico il totale degli incassi selezionati.
+  useEffect(() => {
+    if (itemFields.length === 1 && selectedPayments.length > 0) {
+      form.setValue('items.0.amount', Math.round(paymentsTotal * 100) / 100, { shouldValidate: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paymentsTotal, itemFields.length, selectedPayments.length]);
 
   const onSubmit = async (data: InvoiceFormData) => {
     try {
@@ -101,7 +113,7 @@ export function InvoiceForm({ clients, pendingPayments, onSuccess }: InvoiceForm
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button className="w-full sm:w-auto" disabled={pendingPayments.length === 0}>
+        <Button className="w-full sm:w-auto">
           <span className="flex items-center gap-2">Nuova Fattura</span>
         </Button>
       </DialogTrigger>
@@ -143,18 +155,18 @@ export function InvoiceForm({ clients, pendingPayments, onSuccess }: InvoiceForm
 
           {selectedClientId && clientPayments.length > 0 && (
             <div className="space-y-2">
-              <Label className="font-medium">Incassi da includere (Totale: {totalAmount.toFixed(2)} EUR)</Label>
+              <Label className="font-medium">Incassi da includere (Totale: {paymentsTotal.toFixed(2)} EUR)</Label>
               <div className="border rounded-lg p-2 max-h-60 overflow-y-auto">
                 {clientPayments.map(payment => (
-                  <label key={payment.id} className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer">
+                  <label key={payment.id} className="payment-option p-2">
                     <Checkbox
                       checked={selectedPayments.includes(payment.id)}
                       onCheckedChange={() => togglePayment(payment.id)}
                     />
                     <div className="flex-1">
                       <p className="font-medium">{payment.description}</p>
-                      <p className="text-sm text-gray-500">
-                        {format(new Date(payment.paidAt), 'dd/MM/yyyy')} - {Number(payment.amount).toFixed(2)} EUR
+                      <p className="text-sm text-muted-foreground">
+                        {format(new Date(payment.paidAt), 'dd/MM/yyyy')} - {formatDualAmountShort(payment.amount, (payment as any).originalAmount, (payment as any).originalCurrency, payment.client.type)}
                       </p>
                     </div>
                   </label>
@@ -167,7 +179,7 @@ export function InvoiceForm({ clients, pendingPayments, onSuccess }: InvoiceForm
           )}
 
           {selectedClientId && clientPayments.length === 0 && (
-            <p className="text-sm text-yellow-600">Nessun incasso pendente per questo cliente</p>
+            <p className="warning-text">Nessun incasso pendente per questo cliente</p>
           )}
 
           <div className="border-t pt-4">
@@ -199,9 +211,6 @@ export function InvoiceForm({ clients, pendingPayments, onSuccess }: InvoiceForm
                         {...form.register(`items.${index}.description`)}
                         className="w-full"
                       />
-                      {form.formState.errors.items?.[index]?.description && (
-                        <p className="text-sm text-red-500">{form.formState.errors.items[index].description.message}</p>
-                      )}
                     </TableCell>
                     <TableCell>
                       <Input
@@ -212,9 +221,6 @@ export function InvoiceForm({ clients, pendingPayments, onSuccess }: InvoiceForm
                         {...form.register(`items.${index}.amount`, { valueAsNumber: true })}
                         className="w-full text-right"
                       />
-                      {form.formState.errors.items?.[index]?.amount && (
-                        <p className="text-sm text-red-500">{form.formState.errors.items[index].amount.message}</p>
-                      )}
                     </TableCell>
                     <TableCell>
                       <Button
@@ -232,15 +238,25 @@ export function InvoiceForm({ clients, pendingPayments, onSuccess }: InvoiceForm
               </TableBody>
             </Table>
             {form.formState.errors.items && (
-              <p className="text-sm text-red-500 mt-2">{form.formState.errors.items.message}</p>
+              <p className="text-sm text-red-500 mt-2">
+                {(form.formState.errors.items as any)?.message || 'Verifica descrizioni e importi delle righe.'}
+              </p>
             )}
           </div>
+
+          <div className="flex justify-end gap-6 pt-2 text-sm">
+            <span>Totale incassi: <strong>{paymentsTotal.toFixed(2)} €</strong></span>
+            <span>Totale righe: <strong className={totalsMismatch ? 'text-red-500' : ''}>{linesTotal.toFixed(2)} €</strong></span>
+          </div>
+          {totalsMismatch && selectedPayments.length > 0 && (
+            <p className="text-sm text-red-500 text-right">Il totale delle righe deve corrispondere al totale degli incassi selezionati.</p>
+          )}
 
           <div className="flex justify-end gap-2 pt-4 border-t">
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>
               Annulla
             </Button>
-            <Button type="submit" disabled={selectedPayments.length === 0 || itemFields.length === 0}>
+            <Button type="submit" disabled={itemFields.length === 0 || totalsMismatch}>
               Genera Fattura
             </Button>
           </div>

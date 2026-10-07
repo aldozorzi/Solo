@@ -1,5 +1,9 @@
+import { create } from 'xmlbuilder2';
 import { Client, Invoice, InvoiceItem, Payment, User, TaxRegime } from '@prisma/client';
 import { InvoiceTotals } from './tax';
+
+const FATTURE_NS = 'http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2';
+const DS_NS = 'http://www.w3.org/2000/09/xmldsig#';
 
 export interface SdiConfig {
   sender: {
@@ -34,13 +38,8 @@ export interface InvoiceDataForXml {
   config: SdiConfig;
 }
 
-function escapeXml(str: string): string {
-  return str
-    .replace(/&/g, '&')
-    .replace(/</g, '<')
-    .replace(/>/g, '>')
-    .replace(/"/g, '"')
-    .replace(/'/g, '&apos;');
+function truncate(str: string, maxLen: number): string {
+  return str.length > maxLen ? str.slice(0, maxLen) : str;
 }
 
 function formatDateForXml(date: Date | string): string {
@@ -53,13 +52,20 @@ function formatDecimal(value: number | string | { toString: () => string }): str
   return num.toFixed(2);
 }
 
-function formatDecimal8(value: number | string | { toString: () => string }): string {
-  const num = typeof value === 'number' ? value : parseFloat(value.toString());
-  return num.toFixed(2);
-}
-
 function getRegimeFiscaleCode(taxRegime: TaxRegime): string {
   return taxRegime === 'FORFETTARIO' ? 'RF19' : 'RF01';
+}
+
+/**
+ * Progressivo univoco del file (max 5 caratteri alfanumerici, All. A §1.2.2):
+ * 2 cifre anno + 3 cifre numero (supporta fino a 999 fatture/anno).
+ */
+export function invoiceProgressivo(invoice: Invoice): string {
+  const year2 = String(invoice.year).slice(-2);
+  if (invoice.number <= 999) {
+    return `${year2}${String(invoice.number).padStart(3, '0')}`;
+  }
+  return String(invoice.number).slice(-5);
 }
 
 export function userToSdiConfig(user: User): SdiConfig {
@@ -79,192 +85,11 @@ export function userToSdiConfig(user: User): SdiConfig {
         nazione: user.country || 'IT',
       },
       contacts: {
-        email: undefined,
+        email: user.email,
       },
     },
     progressivoInvio: '1',
   };
-}
-
-export function generateFatturaPAXml(data: InvoiceDataForXml): string {
-  const { invoice, totals, config } = data;
-  const { client, items, payments } = invoice;
-
-  const invoiceDate = formatDateForXml(invoice.date);
-  const progressivoInvio = config.progressivoInvio || '1';
-
-  const sender = config.sender;
-  const clientSdiCode = client.sdiCode || (client.type === 'ITALY' ? '0000000' : 'XXXXXXX');
-  const clientCountry = client.country || 'IT';
-  const clientZipCode = client.zipCode || (client.type === 'ITALY' ? '00000' : '00000');
-  const clientCity = client.city || 'N/A';
-  const clientAddress = client.address || 'N/A';
-  const clientProvince = clientProvinceFromCountry(clientCountry, clientZipCode);
-
-  let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
-  xml += '<FatturaElettronica xmlns="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2" ';
-  xml += 'xmlns:ds="http://www.w3.org/2000/09/xmldsig#" ';
-  xml += 'versione="FPR12" ';
-  xml += `SistemaEmittente="${escapeXml('Solo')}"`;
-  xml += '>\n';
-
-  xml += '  <FatturaElettronicaHeader>\n';
-
-  xml += '    <DatiTrasmissione>\n';
-  xml += '      <IdTrasmittente>\n';
-  xml += `        <IdPaese>${escapeXml(sender.idPaese)}</IdPaese>\n`;
-  xml += `        <IdCodice>${escapeXml(sender.idCodice)}</IdCodice>\n`;
-  xml += '      </IdTrasmittente>\n';
-  xml += `      <ProgressivoInvio>${escapeXml(progressivoInvio)}</ProgressivoInvio>\n`;
-  xml += '      <FormatoTrasmissione>FPR12</FormatoTrasmissione>\n';
-  xml += `      <CodiceDestinatario>${escapeXml(clientSdiCode)}</CodiceDestinatario>\n`;
-  if (sender.contacts?.email) {
-    xml += '      <ContattiTrasmittente>\n';
-    xml += `        <Email>${escapeXml(sender.contacts.email)}</Email>\n`;
-    xml += '      </ContattiTrasmittente>\n';
-  }
-  if (client.type === 'ITALY' && client.taxCode) {
-    xml += `      <PECDestinatario>${escapeXml(client.taxCode + '@pec.example.com')}</PECDestinatario>\n`;
-  }
-  xml += '    </DatiTrasmissione>\n';
-
-  xml += '    <CedentePrestatore>\n';
-  xml += '      <DatiAnagrafici>\n';
-  xml += '        <IdFiscaleIVA>\n';
-  xml += `          <IdPaese>${escapeXml(sender.idPaese)}</IdPaese>\n`;
-  xml += `          <IdCodice>${escapeXml(sender.idCodice)}</IdCodice>\n`;
-  xml += '        </IdFiscaleIVA>\n';
-  xml += `        <CodiceFiscale>${escapeXml(sender.codiceFiscale)}</CodiceFiscale>\n`;
-  xml += '        <Anagrafica>\n';
-  xml += `          <Denominazione>${escapeXml(sender.denominazione)}</Denominazione>\n`;
-  xml += '        </Anagrafica>\n';
-  xml += `        <RegimeFiscale>${escapeXml(sender.regimeFiscale)}</RegimeFiscale>\n`;
-  xml += '      </DatiAnagrafici>\n';
-  xml += '      <Sede>\n';
-  xml += `        <Indirizzo>${escapeXml(sender.address.indirizzo)}</Indirizzo>\n`;
-  xml += `        <NumeroCivico>${escapeXml(sender.address.numeroCivico)}</NumeroCivico>\n`;
-  xml += `        <CAP>${escapeXml(sender.address.cap)}</CAP>\n`;
-  xml += `        <Comune>${escapeXml(sender.address.comune)}</Comune>\n`;
-  xml += `        <Provincia>${escapeXml(sender.address.provincia)}</Provincia>\n`;
-  xml += `        <Nazione>${escapeXml(sender.address.nazione)}</Nazione>\n`;
-  xml += '      </Sede>\n';
-  if (sender.contacts?.telefono || sender.contacts?.email) {
-    xml += '      <Contatti>\n';
-    if (sender.contacts.telefono) {
-      xml += `        <Telefono>${escapeXml(sender.contacts.telefono)}</Telefono>\n`;
-    }
-    if (sender.contacts.email) {
-      xml += `        <Email>${escapeXml(sender.contacts.email)}</Email>\n`;
-    }
-    xml += '      </Contatti>\n';
-  }
-  xml += '    </CedentePrestatore>\n';
-
-  xml += '    <CessionarioCommittente>\n';
-  xml += '      <DatiAnagrafici>\n';
-  if (client.vatNumber) {
-    xml += '        <IdFiscaleIVA>\n';
-    xml += `          <IdPaese>${escapeXml(clientCountry)}</IdPaese>\n`;
-    xml += `          <IdCodice>${escapeXml(client.vatNumber)}</IdCodice>\n`;
-    xml += '        </IdFiscaleIVA>\n';
-  }
-  if (client.taxCode) {
-    xml += `        <CodiceFiscale>${escapeXml(client.taxCode)}</CodiceFiscale>\n`;
-  }
-  xml += '        <Anagrafica>\n';
-  xml += `          <Denominazione>${escapeXml(client.name)}</Denominazione>\n`;
-  xml += '        </Anagrafica>\n';
-  xml += '      </DatiAnagrafici>\n';
-  xml += '      <Sede>\n';
-  xml += `        <Indirizzo>${escapeXml(clientAddress)}</Indirizzo>\n`;
-  xml += `        <NumeroCivico>SNC</NumeroCivico>\n`;
-  xml += `        <CAP>${escapeXml(clientZipCode)}</CAP>\n`;
-  xml += `        <Comune>${escapeXml(clientCity)}</Comune>\n`;
-  if (clientCountry === 'IT') {
-    xml += `        <Provincia>${escapeXml(clientProvince)}</Provincia>\n`;
-  }
-  xml += `        <Nazione>${escapeXml(clientCountry)}</Nazione>\n`;
-  xml += '      </Sede>\n';
-  xml += '    </CessionarioCommittente>\n';
-
-  xml += '  </FatturaElettronicaHeader>\n';
-
-  xml += '  <FatturaElettronicaBody>\n';
-  xml += '    <DatiGenerali>\n';
-  xml += '      <DatiGeneraliDocumento>\n';
-  xml += '        <TipoDocumento>TD01</TipoDocumento>\n';
-  xml += '        <Divisa>EUR</Divisa>\n';
-  xml += `        <Data>${escapeXml(invoiceDate)}</Data>\n`;
-  xml += `        <Numero>${escapeXml(invoice.number.toString())}</Numero>\n`;
-
-  if (totals.stampDutyAmount > 0) {
-    xml += '        <DatiBollo>\n';
-    xml += '          <BolloVirtuale>SI</BolloVirtuale>\n';
-    xml += `          <ImportoBollo>${formatDecimal(totals.stampDutyAmount)}</ImportoBollo>\n`;
-    xml += '        </DatiBollo>\n';
-  }
-
-  xml += `        <ImportoTotaleDocumento>${formatDecimal(totals.totalAmount)}</ImportoTotaleDocumento>\n`;
-  xml += `        <Causale>${escapeXml(totals.legalNotes)}</Causale>\n`;
-  xml += '      </DatiGeneraliDocumento>\n';
-  xml += '    </DatiGenerali>\n';
-
-  xml += '    <DatiBeniServizi>\n';
-
-  items.forEach((item, index) => {
-    const lineNumber = index + 1;
-    xml += '      <DettaglioLinee>\n';
-    xml += `        <NumeroLinea>${lineNumber}</NumeroLinea>\n`;
-    xml += `        <Descrizione>${escapeXml(item.description)}</Descrizione>\n`;
-    xml += '        <Quantita>1.00</Quantita>\n';
-    xml += '        <UnitaMisura>NR</UnitaMisura>\n';
-    xml += `        <PrezzoUnitario>${formatDecimal8(item.amount)}</PrezzoUnitario>\n`;
-    xml += `        <PrezzoTotale>${formatDecimal8(item.amount)}</PrezzoTotale>\n`;
-    
-    const vatRate = totals.vatRate || 0;
-    xml += `        <AliquotaIVA>${vatRate.toFixed(2)}</AliquotaIVA>\n`;
-    xml += `        <Natura>${escapeXml(totals.vatNatureCode)}</Natura>\n`;
-    xml += `        <RiferimentoNormativo>${escapeXml(totals.legalNotes)}</RiferimentoNormativo>\n`;
-    xml += '      </DettaglioLinee>\n';
-  });
-
-  xml += '      <DatiRiepilogo>\n';
-  xml += `        <AliquotaIVA>${(totals.vatRate || 0).toFixed(2)}</AliquotaIVA>\n`;
-  xml += `        <Natura>${escapeXml(totals.vatNatureCode)}</Natura>\n`;
-  xml += `        <ImponibileImporto>${formatDecimal(totals.subtotal)}</ImponibileImporto>\n`;
-  xml += `        <Imposta>${formatDecimal(totals.vatAmount)}</Imposta>\n`;
-  xml += '        <EsigibilitaIVA>I</EsigibilitaIVA>\n';
-  xml += `        <RiferimentoNormativo>${escapeXml(totals.legalNotes)}</RiferimentoNormativo>\n`;
-  xml += '      </DatiRiepilogo>\n';
-
-  if (totals.stampDutyAmount > 0) {
-    xml += '      <DatiRiepilogo>\n';
-    xml += '        <AliquotaIVA>0.00</AliquotaIVA>\n';
-    xml += '        <Natura>N2.2</Natura>\n';
-    xml += `        <ImponibileImporto>${formatDecimal(totals.stampDutyAmount)}</ImponibileImporto>\n`;
-    xml += '        <Imposta>0.00</Imposta>\n';
-    xml += '        <EsigibilitaIVA>I</EsigibilitaIVA>\n';
-    xml += '        <RiferimentoNormativo>Imposta di bollo assolta in modo virtuale ai sensi del D.M. 17/06/2014</RiferimentoNormativo>\n';
-    xml += '      </DatiRiepilogo>\n';
-  }
-
-  xml += '    </DatiBeniServizi>\n';
-
-  xml += '    <DatiPagamento>\n';
-  xml += '      <CondizioniPagamento>TP02</CondizioniPagamento>\n';
-  
-  xml += '      <DettaglioPagamento>\n';
-  xml += `        <ModalitaPagamento>MP05</ModalitaPagamento>`;
-  xml += `        <ImportoPagamento>${formatDecimal(totals.totalAmount)}</ImportoPagamento>\n`;
-  xml += `        <DataRiferimentoTerminiPagamento>${escapeXml(invoiceDate)}</DataRiferimentoTerminiPagamento>\n`;
-  xml += `        <DataScadenzaPagamento>${escapeXml(invoiceDate)}</DataScadenzaPagamento>\n`;
-  xml += '      </DettaglioPagamento>\n';
-  xml += '    </DatiPagamento>\n';
-
-  xml += '  </FatturaElettronicaBody>\n';
-  xml += '</FatturaElettronica>\n';
-
-  return xml;
 }
 
 function clientProvinceFromCountry(country: string, zipCode: string): string {
@@ -273,11 +98,249 @@ function clientProvinceFromCountry(country: string, zipCode: string): string {
     '001': 'RM', '101': 'TO', '201': 'MI', '301': 'VE', '401': 'BO',
     '501': 'FI', '601': 'AN', '701': 'BA', '801': 'NA', '901': 'PA',
   };
-  const prefix = zipCode.substring(0, 3);
+  const prefix = (zipCode || '').substring(0, 3);
   return provinceMap[prefix] || 'RM';
 }
 
-export function generateFileName(invoice: Invoice): string {
-  const dateStr = formatDateForXml(invoice.date).replace(/-/g, '');
-  return `IT${invoice.clientId}_${dateStr}_${invoice.number}.xml`;
+interface RiepilogoGroup {
+  aliquota: number;
+  natura: string;
+  normativeRef: string;
+  subtotal: number;
+  vatAmount: number;
+}
+
+export function generateFatturaPAXml(data: InvoiceDataForXml): string {
+  const { invoice, totals, config } = data;
+  const { client, items } = invoice;
+  const sender = config.sender;
+
+  const invoiceDate = formatDateForXml(invoice.date);
+  const progressivoInvio = config.progressivoInvio || '1';
+
+  const clientSdiCode = client.sdiCode || (client.type === 'ITALY' ? '0000000' : 'XXXXXXX');
+  const clientCountry = client.country || 'IT';
+  const clientZipCode = client.zipCode || '00000';
+  const clientCity = client.city || 'N/A';
+  const clientAddress = client.address || 'N/A';
+
+  const hasVatRate = (totals.vatRate || 0) !== 0;
+
+  const doc = create({ version: '1.0', encoding: 'UTF-8' });
+  const root = doc.ele('FatturaElettronica', {
+    xmlns: FATTURE_NS,
+    'xmlns:ds': DS_NS,
+    versione: 'FPR12',
+    SistemaEmittente: 'Solo',
+  });
+
+  // ---------- HEADER ----------
+  // All. A / errore FeX 370: il namespace di default sul nodo radice va azzerato
+  // sui nodi Header e Body (lo schema è elementFormDefault=unqualified).
+  const header = root.ele('FatturaElettronicaHeader', { xmlns: '' });
+
+  const dt = header.ele('DatiTrasmissione');
+  const idTrasm = dt.ele('IdTrasmittente');
+  idTrasm.ele('IdPaese').txt(sender.idPaese);
+  idTrasm.ele('IdCodice').txt(sender.idCodice);
+  dt.ele('ProgressivoInvio').txt(progressivoInvio);
+  dt.ele('FormatoTrasmissione').txt('FPR12');
+  dt.ele('CodiceDestinatario').txt(clientSdiCode);
+  if (sender.contacts?.email) {
+    const ct = dt.ele('ContattiTrasmittente');
+    ct.ele('Email').txt(truncate(sender.contacts.email, 256));
+  }
+
+  const ced = header.ele('CedentePrestatore');
+  const cedAnag = ced.ele('DatiAnagrafici');
+  const cedIva = cedAnag.ele('IdFiscaleIVA');
+  cedIva.ele('IdPaese').txt(sender.idPaese);
+  cedIva.ele('IdCodice').txt(sender.idCodice);
+  cedAnag.ele('CodiceFiscale').txt(sender.codiceFiscale);
+  cedAnag.ele('Anagrafica').ele('Denominazione').txt(truncate(sender.denominazione, 80));
+  cedAnag.ele('RegimeFiscale').txt(sender.regimeFiscale);
+  const cedSede = ced.ele('Sede');
+  cedSede.ele('Indirizzo').txt(truncate(sender.address.indirizzo, 60));
+  cedSede.ele('NumeroCivico').txt(truncate(sender.address.numeroCivico, 8));
+  cedSede.ele('CAP').txt(sender.address.cap);
+  cedSede.ele('Comune').txt(truncate(sender.address.comune, 60));
+  cedSede.ele('Provincia').txt(sender.address.provincia);
+  cedSede.ele('Nazione').txt(sender.address.nazione);
+
+  const ces = header.ele('CessionarioCommittente');
+  const cesAnag = ces.ele('DatiAnagrafici');
+  // All. A §2.1.4 / errore 00417: almeno uno tra IdFiscaleIVA e CodiceFiscale.
+  // Per i soggetti esteri senza identificativo si usa IdPaese + codice convenzionale
+  // (lo SdI non valida in Anagrafe gli identificativi non IT).
+  if (client.vatNumber) {
+    const cesIva = cesAnag.ele('IdFiscaleIVA');
+    cesIva.ele('IdPaese').txt(clientCountry);
+    cesIva.ele('IdCodice').txt(client.vatNumber);
+  } else if (client.type !== 'ITALY') {
+    const cesIva = cesAnag.ele('IdFiscaleIVA');
+    cesIva.ele('IdPaese').txt(clientCountry);
+    cesIva.ele('IdCodice').txt('0000000');
+  }
+  if (client.taxCode) {
+    cesAnag.ele('CodiceFiscale').txt(client.taxCode);
+  }
+  cesAnag.ele('Anagrafica').ele('Denominazione').txt(truncate(client.name, 80));
+  const cesSede = ces.ele('Sede');
+  cesSede.ele('Indirizzo').txt(truncate(clientAddress, 60));
+  cesSede.ele('NumeroCivico').txt('SNC');
+  cesSede.ele('CAP').txt(clientZipCode);
+  cesSede.ele('Comune').txt(truncate(clientCity, 60));
+  if (clientCountry === 'IT') {
+    cesSede.ele('Provincia').txt(clientProvinceFromCountry(clientCountry, clientZipCode));
+  }
+  // Nazione è obbligatoria in Sede anche per i soggetti esteri (errore FeX 142).
+  cesSede.ele('Nazione').txt(clientCountry);
+  if (sender.contacts?.email) {
+    const cedContatti = ced.ele('Contatti');
+    cedContatti.ele('Email').txt(truncate(sender.contacts.email, 256));
+  }
+  
+
+  // ---------- BODY ----------
+  const body = root.ele('FatturaElettronicaBody', { xmlns: '' });
+  const dg = body.ele('DatiGenerali');
+  const dgd = dg.ele('DatiGeneraliDocumento');
+  dgd.ele('TipoDocumento').txt('TD01');
+  dgd.ele('Divisa').txt('EUR');
+  dgd.ele('Data').txt(invoiceDate);
+  dgd.ele('Numero').txt(String(invoice.number));
+  if (totals.stampDutyAmount > 0) {
+    const bollo = dgd.ele('DatiBollo');
+    bollo.ele('BolloVirtuale').txt('SI');
+    bollo.ele('ImportoBollo').txt(formatDecimal(totals.stampDutyAmount));
+  }
+  // DatiRitenuta (solo per libero professionista in ordinario verso Italia)
+  if (totals.hasWithholding && totals.withholdingAmount > 0) {
+    const ritenuta = dgd.ele('DatiRitenuta');
+    ritenuta.ele('TipoRitenuta').txt('RT01');
+    ritenuta.ele('ImportoRitenuta').txt(formatDecimal(totals.withholdingAmount));
+    ritenuta.ele('AliquotaRitenuta').txt('20.00');
+    ritenuta.ele('CausalePagamento').txt('A');
+  }
+  dgd.ele('ImportoTotaleDocumento').txt(formatDecimal(totals.totalAmount));
+  // Causale: aggiungi riferimento ritenuta se presente
+  const causale = totals.hasWithholding
+    ? `${totals.legalNotes}. Ritenuta d'acconto 20% ai sensi del DPR 600/73.`
+    : totals.legalNotes;
+  dgd.ele('Causale').txt(truncate(causale, 200));
+
+  const dbs = body.ele('DatiBeniServizi');
+
+  items.forEach((item, index) => {
+    const line = dbs.ele('DettaglioLinee');
+    line.ele('NumeroLinea').txt(String(index + 1));
+    line.ele('Descrizione').txt(truncate(item.description, 1000));
+    line.ele('Quantita').txt('1.00');
+    line.ele('UnitaMisura').txt('NR');
+    line.ele('PrezzoUnitario').txt(formatDecimal(item.amount));
+    line.ele('PrezzoTotale').txt(formatDecimal(item.amount));
+    line.ele('AliquotaIVA').txt((totals.vatRate || 0).toFixed(2));
+    // Ritenuta d'acconto: flag obbligatorio in DettaglioLinee (All. A §2.2.6)
+    if (totals.hasWithholding) {
+      line.ele('Ritenuta').txt('SI');
+    }
+    // Natura SOLO se aliquota zero (errori 00400/00401/00429/00430).
+    // RiferimentoNormativo NON esiste in DettaglioLinee: solo in DatiRiepilogo.
+    if (!hasVatRate && totals.vatNatureCode) {
+      line.ele('Natura').txt(totals.vatNatureCode);
+    }
+  });
+
+  // DatiRiepilogo raggruppati per aliquota (errore 00422: ImponibileImporto
+  // = somma dei PrezzoTotale delle linee con stessa aliquota).
+  const groups = new Map<number, RiepilogoGroup>();
+  items.forEach((item) => {
+    const key = Math.round((totals.vatRate || 0) * 100);
+    const g = groups.get(key) || {
+      aliquota: totals.vatRate || 0,
+      natura: totals.vatNatureCode,
+      normativeRef: totals.normativeRef || '',
+      subtotal: 0,
+      vatAmount: 0,
+    };
+    g.subtotal = Math.round((g.subtotal + Number(item.amount)) * 100) / 100;
+    groups.set(key, g);
+  });
+  groups.forEach((g) => {
+    g.vatAmount = Math.round(g.subtotal * (g.aliquota / 100) * 100) / 100;
+    const rie = dbs.ele('DatiRiepilogo');
+    rie.ele('AliquotaIVA').txt(g.aliquota.toFixed(2));
+    if (!hasVatRate && g.natura) {
+      rie.ele('Natura').txt(g.natura);
+    }
+    rie.ele('ImponibileImporto').txt(formatDecimal(g.subtotal));
+    rie.ele('Imposta').txt(formatDecimal(g.vatAmount));
+    rie.ele('EsigibilitaIVA').txt('I');
+    if (!hasVatRate && g.normativeRef) {
+      rie.ele('RiferimentoNormativo').txt(truncate(g.normativeRef, 100));
+    }
+  });
+
+  const dp = body.ele('DatiPagamento');
+  const paymentCount = invoice.payments.length;
+
+  // Calcolo Netto a Pagare secondo la logica richiesta:
+  // 1. Totale Documento = imponibile + IVA (totals.totalAmount)
+  // 2. Se ritenuta d'acconto: netto = totale - ritenuta; altrimenti netto = totale
+  const totaleDocumento = totals.totalAmount;
+  const nettoAPagare = totals.hasWithholding
+    ? Math.round((totaleDocumento - totals.withholdingAmount) * 100) / 100
+    : totaleDocumento;
+
+  if (paymentCount === 1) {
+    // Un solo pagamento → TP02, un DettaglioPagamento con il netto a pagare
+    dp.ele('CondizioniPagamento').txt('TP02');
+    const p = invoice.payments[0];
+    const dett = dp.ele('DettaglioPagamento');
+    dett.ele('ModalitaPagamento').txt('MP05');
+    const paidDate = formatDateForXml(p.paidAt);
+    dett.ele('DataRiferimentoTerminiPagamento').txt(paidDate);
+    dett.ele('DataScadenzaPagamento').txt(paidDate);
+    dett.ele('ImportoPagamento').txt(formatDecimal(nettoAPagare));
+  } else if (paymentCount > 1) {
+    // Più pagamenti → TP01, ripartisco il netto a pagare in modo EQUO
+    // tra tutte le rate (divisione matematica pulita, non basata sui vecchi importi)
+    dp.ele('CondizioniPagamento').txt('TP01');
+    const quotaBase = Math.round((nettoAPagare / paymentCount) * 100) / 100;
+    let remaining = nettoAPagare;
+    invoice.payments.forEach((p, idx) => {
+      const dett = dp.ele('DettaglioPagamento');
+      dett.ele('ModalitaPagamento').txt('MP05');
+      const paidDate = formatDateForXml(p.paidAt);
+      dett.ele('DataRiferimentoTerminiPagamento').txt(paidDate);
+      dett.ele('DataScadenzaPagamento').txt(paidDate);
+      let importo: number;
+      if (idx === invoice.payments.length - 1) {
+        // Ultimo pagamento: uso il resto per far quadrare i centesimi
+        importo = Math.round(remaining * 100) / 100;
+      } else {
+        importo = quotaBase;
+        remaining -= importo;
+      }
+      dett.ele('ImportoPagamento').txt(formatDecimal(importo));
+    });
+  } else {
+    // Nessun pagamento → TP02, un DettaglioPagamento con il netto a pagare
+    dp.ele('CondizioniPagamento').txt('TP02');
+    const dett = dp.ele('DettaglioPagamento');
+    dett.ele('ModalitaPagamento').txt('MP05');
+    dett.ele('DataRiferimentoTerminiPagamento').txt(invoiceDate);
+    dett.ele('DataScadenzaPagamento').txt(invoiceDate);
+    dett.ele('ImportoPagamento').txt(formatDecimal(nettoAPagare));
+  }
+
+  return doc.end({ prettyPrint: true });
+}
+
+/**
+ * Nome file SdI-compliant (All. A §1.2.2): IT + identificativo + _ + progressivo(≤5).
+ */
+export function generateFileName(invoice: Invoice, config: SdiConfig): string {
+  const senderVat = config.sender.idCodice || '00000000000';
+  return `IT${senderVat}_${invoiceProgressivo(invoice)}.xml`;
 }

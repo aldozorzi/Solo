@@ -1,10 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { prisma } from '@/lib/prisma';
+import { z } from 'zod';
 import { calculateInvoiceTotals } from '@/lib/tax';
-import { generateFatturaPAXml, userToSdiConfig } from '@/lib/xml-generator';
+import { generateFatturaPAXml, userToSdiConfig, generateFileName, invoiceProgressivo } from '@/lib/xml-generator';
 import { generateInvoicePdfBuffer, userToSenderInfo } from '@/lib/pdf-generator';
 import { authOptions } from '@/lib/auth';
+
+const dateInputSchema = z.string().min(1, 'Data obbligatoria').refine(
+  (v) => !Number.isNaN(Date.parse(v)),
+  { message: 'Data non valida' }
+);
+
+const invoiceItemSchema = z.object({
+  description: z.string().min(1),
+  amount: z.number().positive(),
+});
+
+const invoiceUpdateSchema = z.object({
+  date: dateInputSchema.optional(),
+  clientId: z.string().min(1).optional(),
+  paymentIds: z.array(z.string()).min(1).optional(),
+  items: z.array(invoiceItemSchema).min(1).optional(),
+  status: z.enum(['DRAFT', 'ISSUED', 'PAID', 'CANCELLED']).optional(),
+});
 
 async function getUserId(): Promise<string> {
   const session = await getServerSession(authOptions);
@@ -34,6 +53,7 @@ async function getUserWithTaxRegime(userId: string) {
     where: { id: userId },
     select: { 
       taxRegime: true,
+      senderType: true,
       businessName: true,
       vatNumber: true,
       taxCode: true,
@@ -42,6 +62,7 @@ async function getUserWithTaxRegime(userId: string) {
       zipCode: true,
       country: true,
       province: true,
+      email: true,
     },
   });
   if (!user) {
@@ -67,37 +88,69 @@ export async function GET(
       subtotal: Number(invoice.subtotalAmount),
       clientType: invoice.client.type,
       taxRegime: user.taxRegime,
+      senderType: user.senderType,
     });
 
     const sdiConfig = userToSdiConfig(user as any);
+    sdiConfig.progressivoInvio = invoiceProgressivo(invoice);
     const senderInfo = userToSenderInfo(user as any);
 
     if (format === 'xml') {
+      // Transizione di stato all'esportazione XML: totalmente pagata -> PAID, altrimenti ISSUED.
+      // Il confronto è sull'importo dovuto dal cliente (imponibile + IVA, senza bollo:
+      // il bollo virtuale è versato dall'emittente tramite F24). Le annullate non si toccano.
+      if (invoice.status !== 'CANCELLED') {
+        const paymentsSum = invoice.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+        const dueAmount = totals.subtotal + (totals.vatAmount || 0);
+        const nextStatus = paymentsSum + 0.005 >= dueAmount ? 'PAID' : 'ISSUED';
+        if (nextStatus !== invoice.status) {
+          await prisma.invoice.update({
+            where: { id },
+            data: { status: nextStatus },
+          });
+        }
+      }
+
       const xml = generateFatturaPAXml({
         invoice,
         totals,
         config: sdiConfig,
       });
 
+      const fileName = generateFileName(invoice, sdiConfig);
+
       return new NextResponse(xml, {
         headers: {
           'Content-Type': 'application/xml',
-          'Content-Disposition': `attachment; filename="fattura_${invoice.number}_${invoice.year}.xml"`,
+          'Content-Disposition': `attachment; filename="${fileName}"`,
         },
       });
     }
 
     if (format === 'pdf') {
+      // Il totale esposto riflette sempre la somma live in EUR degli accrediti collegati.
+      const liveSubtotal =
+        invoice.payments.length > 0
+          ? invoice.payments.reduce((sum, p) => sum + Number(p.amount), 0)
+          : totals.subtotal;
+      const liveVat =
+        totals.vatRate > 0 ? Math.round(liveSubtotal * (totals.vatRate / 100) * 100) / 100 : 0;
+      const pdfTotals = {
+        ...totals,
+        subtotal: Math.round(liveSubtotal * 100) / 100,
+        vatAmount: liveVat,
+        totalAmount: Math.round((liveSubtotal + liveVat) * 100) / 100,
+      };
       const buffer = await generateInvoicePdfBuffer({
         invoice,
-        totals,
+        totals: pdfTotals,
         sender: senderInfo,
       });
 
       return new NextResponse(new Uint8Array(buffer), {
         headers: {
           'Content-Type': 'application/pdf',
-          'Content-Disposition': `attachment; filename="fattura_${invoice.number}_${invoice.year}.pdf"`,
+          'Content-Disposition': `inline; filename="fattura_${invoice.number}_${invoice.year}.pdf"`,
         },
       });
     }
@@ -109,6 +162,108 @@ export async function GET(
     }
     console.error('Error fetching invoice:', error);
     return NextResponse.json({ error: 'Errore nel recupero fattura' }, { status: 500 });
+  }
+}
+
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const userId = await getUserId();
+    const { id } = await params;
+
+    const existing = await verifyInvoiceOwnership(userId, id);
+
+    const body = await request.json();
+    const data = invoiceUpdateSchema.parse(body);
+
+    const effectiveClientId = data.clientId ?? existing.clientId;
+    const client = await prisma.client.findFirst({
+      where: { id: effectiveClientId, userId },
+    });
+    if (!client) {
+      return NextResponse.json({ error: 'Cliente non trovato o accesso negato' }, { status: 403 });
+    }
+
+    if (data.clientId && data.clientId !== existing.clientId && !data.paymentIds) {
+      return NextResponse.json(
+        { error: 'Cambiando cliente è necessario riselezionare gli incassi' },
+        { status: 400 }
+      );
+    }
+
+    let paymentConnect: { id: string }[] | undefined;
+    if (data.paymentIds) {
+      const payments = await prisma.payment.findMany({
+        where: { id: { in: data.paymentIds }, userId },
+      });
+      if (payments.length !== data.paymentIds.length) {
+        return NextResponse.json({ error: 'Alcuni pagamenti non trovati o accesso negato' }, { status: 403 });
+      }
+      if (!payments.every((p) => p.clientId === effectiveClientId)) {
+        return NextResponse.json(
+          { error: 'Tutti gli incassi devono appartenere allo stesso cliente della fattura' },
+          { status: 400 }
+        );
+      }
+      paymentConnect = data.paymentIds.map((pid) => ({ id: pid }));
+    }
+
+    const user = await getUserWithTaxRegime(userId);
+
+    const effectiveItems = data.items ?? existing.items.map((it) => ({
+      description: it.description,
+      amount: Number(it.amount),
+    }));
+    const subtotal = effectiveItems.reduce((sum, item) => sum + item.amount, 0);
+    const totals = calculateInvoiceTotals({
+      subtotal,
+      clientType: client.type,
+      taxRegime: user.taxRegime,
+      senderType: user.senderType,
+    });
+
+    const invoice = await prisma.invoice.update({
+      where: { id },
+      data: {
+        ...(data.date !== undefined ? { date: new Date(data.date) } : {}),
+        clientId: effectiveClientId,
+        ...(data.status !== undefined ? { status: data.status } : {}),
+        subtotalAmount: totals.subtotal,
+        stampDutyAmount: totals.stampDutyAmount,
+        totalAmount: totals.totalAmount,
+        notes: totals.legalNotes,
+        ...(data.items !== undefined
+          ? {
+              items: {
+                deleteMany: {},
+                create: data.items.map((item) => ({
+                  description: item.description,
+                  amount: item.amount,
+                })),
+              },
+            }
+          : {}),
+        ...(paymentConnect !== undefined ? { payments: { set: paymentConnect } } : {}),
+      },
+      include: {
+        client: true,
+        items: true,
+        payments: true,
+      },
+    });
+
+    return NextResponse.json(invoice);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({ error: error.issues }, { status: 400 });
+    }
+    if (error instanceof Error && (error.message === 'Non autenticato' || error.message.includes('accesso negato'))) {
+      return NextResponse.json({ error: error.message }, { status: error.message === 'Non autenticato' ? 401 : 403 });
+    }
+    console.error('Error updating invoice:', error);
+    return NextResponse.json({ error: "Errore nell'aggiornamento fattura" }, { status: 500 });
   }
 }
 

@@ -6,21 +6,27 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableHeader, TableBody, TableRow, TableCell, TableHead } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Download, FileText, Trash2, Edit, Plus, Settings, Users, Receipt, FileIcon, UserPlus, Shield, LogOut, User } from 'lucide-react';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Download, FileText, Trash2, Edit, Plus, Settings, Users, UserPlus, Shield, LogOut, User } from 'lucide-react';
 import { ClientForm } from './ClientForm';
 import { PaymentForm } from './PaymentForm';
 import { InvoiceForm } from './InvoiceForm';
+import { InvoiceEditDialog } from './InvoiceEditForm';
+import { MainNav } from './MainNav';
+import { ThemeSelector } from './ThemeSelector';
+import { calculateInvoiceTotals } from '@/lib/tax';
 import { SettingsForm } from './SettingsForm';
 import { UserManagement } from './UserManagement';
 import { Client, PaymentWithRelations, InvoiceWithRelations, InvoiceStatus, INVOICE_STATUS_LABELS, INVOICE_STATUS_COLORS, CLIENT_TYPE_LABELS, UserRole, USER_ROLE_LABELS, TAX_REGIME_LABELS, UserSession } from '@/types';
 import { Toaster } from '@/components/ui/sonner';
 import { signOut, useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import { formatDualAmountShort } from '@/lib/tax';
 
 type TabValue = 'payments' | 'invoices' | 'clients' | 'settings' | 'users';
 
-export default function Dashboard() {
+export default function Dashboard({ initialSection = 'payments' }: { initialSection?: TabValue }) {
   const { data: session, status } = useSession();
   const router = useRouter();
   
@@ -29,8 +35,10 @@ export default function Dashboard() {
   const [invoices, setInvoices] = useState<InvoiceWithRelations[]>([]);
   const [pendingPayments, setPendingPayments] = useState<PaymentWithRelations[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<TabValue>('payments');
+  const [activeTab] = useState<TabValue>(initialSection);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
+  const [editingPayment, setEditingPayment] = useState<PaymentWithRelations | null>(null);
+  const [editingInvoice, setEditingInvoice] = useState<InvoiceWithRelations | null>(null);
 
   const user = session?.user as UserSession | undefined;
   const isAdmin = user?.role === 'ADMIN';
@@ -72,6 +80,24 @@ export default function Dashboard() {
   const handleSuccess = () => {
     fetchData();
     setEditingClient(null);
+    setEditingPayment(null);
+    setEditingInvoice(null);
+  };
+
+  const deletePayment = async (paymentId: string) => {
+    if (!confirm("Eliminare questo incasso? L'azione non è reversibile.")) return;
+    try {
+      const res = await fetch(`/api/payments/${paymentId}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchData();
+      } else {
+        const error = await res.json();
+        alert(error.error || 'Errore eliminazione');
+      }
+    } catch (error) {
+      console.error('Error deleting payment:', error);
+      alert('Errore eliminazione');
+    }
   };
 
   const handleSignOut = async () => {
@@ -82,37 +108,33 @@ export default function Dashboard() {
   const downloadXml = async (invoiceId: string) => {
     try {
       const res = await fetch(`/api/invoices/${invoiceId}?format=xml`);
-      if (res.ok) {
-        const blob = await res.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `fattura_${invoiceId}.xml`;
-        a.click();
-        window.URL.revokeObjectURL(url);
-      }
+      if (!res.ok) throw new Error('Errore download XML');
+      const blob = await res.blob();
+      // Il nome file SdI (IT<PIVA>_<progressivo>.xml) è generato dal server in
+      // Content-Disposition: va preservato, non sovrascritto lato client.
+      const disposition = res.headers.get('Content-Disposition') || '';
+      const fileNameMatch = disposition.match(/filename="?([^";]+)"?/i);
+      const fileName = fileNameMatch?.[1] ?? `IT_${invoiceId}.xml`;
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      // L'esportazione XML può aver aggiornato lo stato: ricarica i dati.
+      fetchData();
     } catch (error) {
       console.error('Error downloading XML:', error);
       alert('Errore download XML');
     }
   };
 
-  const downloadPdf = async (invoiceId: string) => {
-    try {
-      const res = await fetch(`/api/invoices/${invoiceId}?format=pdf`);
-      if (res.ok) {
-        const blob = await res.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `fattura_${invoiceId}.pdf`;
-        a.click();
-        window.URL.revokeObjectURL(url);
-      }
-    } catch (error) {
-      console.error('Error downloading PDF:', error);
-      alert('Errore download PDF');
-    }
+  const openPdf = (invoiceId: string) => {
+    // Navigazione diretta: il browser apre il PDF nel visualizzatore
+    // usando il filename dall'header Content-Disposition.
+    window.open(`/api/invoices/${invoiceId}?format=pdf`, '_blank', 'noopener,noreferrer');
   };
 
   const deleteInvoice = async (invoiceId: string) => {
@@ -157,14 +179,6 @@ export default function Dashboard() {
     return null;
   }
 
-  const tabs = [
-    { value: 'payments', label: 'Incassi', icon: Receipt, count: pendingPayments.length },
-    { value: 'invoices', label: 'Fatture', icon: FileIcon, count: invoices.length },
-    { value: 'clients', label: 'Clienti', icon: Users, count: clients.length },
-    { value: 'settings', label: 'Impostazioni', icon: Settings, count: null },
-    ...(isAdmin ? [{ value: 'users', label: 'Utenti', icon: Users, count: null } as const] : []),
-  ];
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -175,9 +189,12 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={handleSignOut} title="Esci">
-            <LogOut className="w-4 h-4" />
-          </Button>
+          <div className="flex items-center gap-1">
+            <ThemeSelector />
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleSignOut} title="Esci">
+              <LogOut className="w-4 h-4" />
+            </Button>
+          </div>
           <div className="w-px h-6 bg-border" />
           <span className="text-sm text-muted-foreground">{user?.name}</span>
           <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-medium">
@@ -186,18 +203,15 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabValue)} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-{isAdmin ? 5 : 4}">
-          {tabs.map(tab => (
-            <TabsTrigger key={tab.value} value={tab.value}>
-              <span className="flex items-center gap-2">
-                <tab.icon className="w-4 h-4" />
-                {tab.label}
-                {tab.count !== null && <span className="text-xs bg-muted px-2 py-0.5 rounded-full">{tab.count}</span>}
-              </span>
-            </TabsTrigger>
-          ))}
-        </TabsList>
+      <Tabs value={activeTab} className="space-y-4">
+        <MainNav
+          isAdmin={isAdmin}
+          counts={{
+            payments: pendingPayments.length,
+            invoices: invoices.length,
+            clients: clients.length,
+          }}
+        />
 
         <TabsContent value="payments">
           <div className="flex justify-between items-center mb-4">
@@ -216,7 +230,7 @@ export default function Dashboard() {
                     <TableHead className="text-right">Importo</TableHead>
                     <TableHead>Descrizione</TableHead>
                     <TableHead>Stato</TableHead>
-                    <TableHead className="w-32">Azioni</TableHead>
+                    <TableHead className="w-40">Azioni</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -236,25 +250,52 @@ export default function Dashboard() {
                             {CLIENT_TYPE_LABELS[payment.client.type]}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-right font-mono tabular-nums">
-                          {Number(payment.amount).toFixed(2)} EUR
+                        <TableCell className="dashboard-amount text-right font-mono tabular-nums">
+                          {formatDualAmountShort(payment.amount, (payment as any).originalAmount, (payment as any).originalCurrency, payment.client.type)}
                         </TableCell>
                         <TableCell className="max-w-[200px] truncate">{payment.description}</TableCell>
                         <TableCell>
-                          <Badge variant={payment.invoiceId ? 'default' : 'outline'}>
-                            {payment.invoiceId ? `Fattura ${payment.invoiceId}` : 'Pendente'}
+                          <Badge variant="outline">
+                            {payment.invoiceId ? 'Fatturato' : 'Pendente'}
                           </Badge>
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1">
-                            {payment.invoiceId && (
+                            {!payment.invoiceId ? (
                               <>
-                                {/* @ts-ignore */}
-                                <Button variant="ghost" size="icon" onClick={() => downloadXml(payment.invoiceId!)} title="Scarica XML">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => setEditingPayment(payment)}
+                                  title="Modifica incasso"
+                                >
+                                  <Edit className="w-4 h-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => deletePayment(payment.id)}
+                                  title="Elimina incasso"
+                                >
+                                  <Trash2 className="w-4 h-4 text-red-500" />
+                                </Button>
+                              </>
+                            ) : (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => downloadXml(payment.invoiceId as string)}
+                                  title="Scarica fattura XML"
+                                >
                                   <Download className="w-4 h-4" />
                                 </Button>
-                                {/* @ts-ignore */}
-                                <Button variant="ghost" size="icon" onClick={() => downloadPdf(payment.invoiceId!)} title="Scarica PDF">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => openPdf(payment.invoiceId as string)}
+                                  title="Apri fattura PDF"
+                                >
                                   <FileText className="w-4 h-4" />
                                 </Button>
                               </>
@@ -285,35 +326,39 @@ export default function Dashboard() {
                     <TableHead>Data</TableHead>
                     <TableHead>Cliente</TableHead>
                     <TableHead className="text-right">Imponibile</TableHead>
-                    <TableHead className="text-right">Bollo</TableHead>
                     <TableHead className="text-right">Totale</TableHead>
                     <TableHead>Stato</TableHead>
-                    <TableHead className="w-40">Azioni</TableHead>
+                    <TableHead className="w-44">Azioni</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {invoices.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                         Nessuna fattura emessa
                       </TableCell>
                     </TableRow>
                   ) : (
-                    invoices.map(invoice => (
+                    invoices.map(invoice => {
+                      const displayTotals = calculateInvoiceTotals({
+                        subtotal: Number(invoice.subtotalAmount),
+                        clientType: invoice.client.type,
+                        taxRegime: user?.taxRegime || 'FORFETTARIO',
+                        senderType: user?.senderType || 'LIBERO_PROFESSIONISTA',
+                      });
+                      const displayTotal = displayTotals.subtotal + displayTotals.vatAmount;
+                      return (
                       <TableRow key={invoice.id}>
                         <TableCell className="font-mono font-medium">
                           {invoice.number}/{invoice.year}
                         </TableCell>
                         <TableCell>{format(new Date(invoice.date), 'dd/MM/yyyy')}</TableCell>
                         <TableCell className="font-medium">{invoice.client.name}</TableCell>
-                        <TableCell className="text-right font-mono tabular-nums">
+                        <TableCell className="dashboard-amount text-right font-mono tabular-nums">
                           {Number(invoice.subtotalAmount).toFixed(2)} EUR
                         </TableCell>
-                        <TableCell className="text-right font-mono tabular-nums">
-                          {Number(invoice.stampDutyAmount).toFixed(2)} EUR
-                        </TableCell>
-                        <TableCell className="text-right font-mono tabular-nums font-semibold">
-                          {Number(invoice.totalAmount).toFixed(2)} EUR
+                        <TableCell className="dashboard-amount text-right font-mono tabular-nums font-semibold">
+                          {displayTotal.toFixed(2)} EUR
                         </TableCell>
                         <TableCell>
                           <Badge className={INVOICE_STATUS_COLORS[invoice.status]}>
@@ -322,10 +367,18 @@ export default function Dashboard() {
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setEditingInvoice(invoice)}
+                              title="Modifica"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </Button>
                             <Button variant="ghost" size="icon" onClick={() => downloadXml(invoice.id)} title="Scarica XML SdI">
                               <Download className="w-4 h-4" />
                             </Button>
-                            <Button variant="ghost" size="icon" onClick={() => downloadPdf(invoice.id)} title="Scarica PDF">
+                            <Button variant="ghost" size="icon" onClick={() => openPdf(invoice.id)} title="Apri PDF">
                               <FileText className="w-4 h-4" />
                             </Button>
                             <Button variant="ghost" size="icon" onClick={() => deleteInvoice(invoice.id)} title="Elimina">
@@ -334,7 +387,8 @@ export default function Dashboard() {
                           </div>
                         </TableCell>
                       </TableRow>
-                    ))
+                      );
+                    })
                   )}
                 </TableBody>
               </Table>
@@ -345,7 +399,7 @@ export default function Dashboard() {
         <TabsContent value="clients">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-semibold">Anagrafica Clienti</h2>
-            <ClientForm client={editingClient} onSuccess={handleSuccess} />
+            <ClientForm onSuccess={handleSuccess} />
           </div>
 
           <Card>
@@ -429,6 +483,50 @@ export default function Dashboard() {
           </TabsContent>
         )}
       </Tabs>
+
+      <Dialog open={!!editingInvoice} onOpenChange={(v) => { if (!v) setEditingInvoice(null); }}>
+        <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
+          {editingInvoice && (
+            <InvoiceEditDialog
+              invoice={editingInvoice}
+              clients={clients}
+              pendingPayments={pendingPayments}
+              onSuccess={handleSuccess}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!editingPayment} onOpenChange={(v) => { if (!v) setEditingPayment(null); }}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Modifica Incasso</DialogTitle>
+          </DialogHeader>
+          {editingPayment && (
+            <PaymentForm
+              key={editingPayment.id}
+              clients={clients}
+              payment={editingPayment}
+              onSuccess={handleSuccess}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!editingClient} onOpenChange={(v) => { if (!v) setEditingClient(null); }}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>{editingClient ? 'Modifica Cliente' : 'Nuovo Cliente'}</DialogTitle>
+          </DialogHeader>
+          {editingClient && (
+            <ClientForm
+              key={editingClient.id}
+              client={editingClient}
+              onSuccess={handleSuccess}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Toaster position="bottom-right" />
     </div>
