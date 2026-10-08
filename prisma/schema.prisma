@@ -66,9 +66,25 @@ model User {
   invoices      Invoice[]
   accounts      Account[]
   sessions      Session[]
-  
+  authTokens    AuthToken[]
+
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
+}
+
+// Token monouso per setup account e reset password/2FA via email.
+// Nel DB vive solo l'hash SHA-256: il token in chiaro viaggia solo nell'email.
+model AuthToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String    // 'setup' | 'password_reset' | 'mfa_reset'
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
 }
 
 model Account {

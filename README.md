@@ -83,6 +83,9 @@ npm run test:xml:files  # verifica testuale più 36 XML in test-output/
 | `AUTH_TRUST_HOST` | `true` in sviluppo locale (origin dall'Host per IP LAN variabili) | Locale |
 | `AUDIT_WEBHOOK_URL` | (Opzionale) endpoint che riceve gli alert brute-force | No |
 | `AUDIT_LOG_PATH` | (Opzionale) percorso file audit JSONL | No |
+| `RESEND_API_KEY` | Chiave API Resend per le email di setup/reset | Sì |
+| `MAIL_FROM` | Mittente verificato, es. `Solo <noreply@ldazrz.com>` | Sì |
+| `APP_URL` | URL canonico usato nei link email (mai dall'Host: anti poisoning) | Sì |
 
 ## Sicurezza
 

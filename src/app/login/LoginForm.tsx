@@ -12,7 +12,7 @@ interface LoginFormProps {
   showRegisterLink: boolean;
 }
 
-// Errori restituiti via query param dopo un submit nativo (senza JS).
+// Errori via query param dai redirect di NextAuth (sicurezza: solo codici noti).
 const QUERY_ERROR_MESSAGES: Record<string, string> = {
   CredentialsSignin: "Email o password non validi",
   AccessDenied: "Accesso negato",
@@ -47,35 +47,33 @@ export default function LoginForm({ showRegisterLink }: LoginFormProps) {
   const errorParam = searchParams.get('error');
   const error = errorParam ? (QUERY_ERROR_MESSAGES[errorParam] ?? 'Errore durante il login') : null;
 
-  const initialChallenge = searchParams.get('mfa') === '1' ? searchParams.get('challenge') || '' : '';
-  const [step, setStep] = useState<'credentials' | 'mfa'>(initialChallenge ? 'mfa' : 'credentials');
-  const [challenge, setChallenge] = useState(initialChallenge);
+  const [step, setStep] = useState<'credentials' | 'mfa'>('credentials');
+  const [challenge, setChallenge] = useState('');
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [totpCode, setTotpCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [formError, setFormError] = useState('');
+  const [showForgot, setShowForgot] = useState(false);
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotDone, setForgotDone] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
 
   const handleCredentialsSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setLoading(true);
     setFormError('');
 
-    // Legge dal FormData reale: alcuni autofill su mobile riempiono il DOM
-    // senza aggiornare lo stato React, e senza questo il submit resterebbe vuoto.
-    const formData = new FormData(e.currentTarget);
-    const submitEmail = String(formData.get('email') || '').trim() || email.trim();
-    const submitPassword = String(formData.get('password') || '') || password;
-
-    if (!submitEmail || !submitPassword) {
+    const submitEmail = email.trim();
+    if (!submitEmail || !password) {
       setFormError('Inserisci email e password');
       setLoading(false);
       return;
     }
 
     try {
-      const result = await postLoginJson({ email: submitEmail, password: submitPassword, callbackUrl });
+      const result = await postLoginJson({ email: submitEmail, password, callbackUrl });
       if (result.mfaRequired && result.challenge) {
         setChallenge(result.challenge);
         setTotpCode('');
@@ -86,7 +84,7 @@ export default function LoginForm({ showRegisterLink }: LoginFormProps) {
       } else {
         setFormError(JSON_ERROR_MESSAGES[result.error || ''] ?? 'Errore durante il login');
       }
-    } catch (err) {
+    } catch {
       setFormError('Errore durante il login');
     } finally {
       setLoading(false);
@@ -98,28 +96,46 @@ export default function LoginForm({ showRegisterLink }: LoginFormProps) {
     setLoading(true);
     setFormError('');
 
-    const formData = new FormData(e.currentTarget);
-    const submitChallenge = String(formData.get('challenge') || '') || challenge;
-    const submitCode = String(formData.get('totpCode') || '').trim() || totpCode.trim();
-
-    if (!submitChallenge || !submitCode) {
+    const submitCode = totpCode.trim();
+    if (!challenge || !submitCode) {
       setFormError('Inserisci il codice di verifica');
       setLoading(false);
       return;
     }
 
     try {
-      const result = await postLoginJson({ challenge: submitChallenge, totpCode: submitCode, callbackUrl });
+      const result = await postLoginJson({ challenge, totpCode: submitCode, callbackUrl });
       if (result.ok) {
         router.push(callbackUrl);
         router.refresh();
       } else {
         setFormError('Codice non valido, riprova');
       }
-    } catch (err) {
+    } catch {
       setFormError('Errore durante il login');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleForgotSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setForgotLoading(true);
+
+    const submitEmail = forgotEmail.trim();
+
+    try {
+      await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ email: submitEmail, kind: 'password' }),
+      });
+    } catch {
+      // Silenzioso di proposito: la risposta è sempre uniforme.
+    } finally {
+      setForgotLoading(false);
+      // Messaggio identico in ogni caso: non rivela se l'email esiste.
+      setForgotDone(true);
     }
   };
 
@@ -137,55 +153,8 @@ export default function LoginForm({ showRegisterLink }: LoginFormProps) {
           </div>
         )}
 
-        {step === 'credentials' ? (
-          <form method="post" action="/api/login" onSubmit={handleCredentialsSubmit} className="space-y-4">
-            <input type="hidden" name="callbackUrl" value={callbackUrl} />
-            <div>
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                name="email"
-                type="email"
-                autoComplete="username"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="admin@example.com"
-                required
-                disabled={loading}
-                className="mt-1"
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                disabled={loading}
-                className="mt-1"
-              />
-            </div>
-
-            <Button type="submit" className="w-full" disabled={loading} size="lg">
-              {loading ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Accesso...
-                </>
-              ) : (
-                'Accedi'
-              )}
-            </Button>
-          </form>
-        ) : (
-          <form method="post" action="/api/login" onSubmit={handleMfaSubmit} className="space-y-4">
-            <input type="hidden" name="challenge" value={challenge} />
-            <input type="hidden" name="callbackUrl" value={callbackUrl} />
+        {step === 'mfa' ? (
+          <form onSubmit={handleMfaSubmit} className="space-y-4">
             <div>
               <Label htmlFor="totpCode">Codice di verifica</Label>
               <Input
@@ -217,6 +186,114 @@ export default function LoginForm({ showRegisterLink }: LoginFormProps) {
               )}
             </Button>
           </form>
+        ) : showForgot ? (
+          <>
+            {forgotDone ? (
+              <p className="text-sm text-muted-foreground text-center">
+                Se l&apos;indirizzo è registrato, riceverai un&apos;email con le istruzioni per reimpostare la password.
+              </p>
+            ) : (
+              <form onSubmit={handleForgotSubmit} className="space-y-3">
+                <div>
+                  <Label htmlFor="forgotEmail">Email per il recupero</Label>
+                  <Input
+                    id="forgotEmail"
+                    name="email"
+                    type="email"
+                    autoComplete="username"
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    placeholder="nome@esempio.it"
+                    required
+                    disabled={forgotLoading}
+                    className="mt-1"
+                  />
+                </div>
+                <Button type="submit" className="w-full" disabled={forgotLoading}>
+                  {forgotLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Invio...
+                    </>
+                  ) : (
+                    'Invia link di reset'
+                  )}
+                </Button>
+              </form>
+            )}
+            <div className="text-center">
+              <button
+                type="button"
+                className="text-sm text-primary hover:underline font-medium"
+                onClick={() => {
+                  setShowForgot(false);
+                  setForgotDone(false);
+                }}
+              >
+                Torna al login
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <form onSubmit={handleCredentialsSubmit} className="space-y-4">
+              <div>
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  name="email"
+                  type="email"
+                  autoComplete="username"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="admin@example.com"
+                  required
+                  disabled={loading}
+                  className="mt-1"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  disabled={loading}
+                  className="mt-1"
+                />
+              </div>
+
+              <Button type="submit" className="w-full" disabled={loading} size="lg">
+                {loading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Accesso...
+                  </>
+                ) : (
+                  'Accedi'
+                )}
+              </Button>
+            </form>
+
+            <div className="text-center">
+              <button
+                type="button"
+                className="text-sm text-primary hover:underline font-medium"
+                onClick={() => {
+                  setForgotEmail(email);
+                  setShowForgot(true);
+                  setForgotDone(false);
+                }}
+              >
+                Password dimenticata?
+              </button>
+            </div>
+          </>
         )}
 
         {showRegisterLink && (

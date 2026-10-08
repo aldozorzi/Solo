@@ -19,6 +19,11 @@ export type AuditEventType =
   | "user.mfa_disabled"
   | "user.mfa_reset"
   | "settings.updated"
+  | "auth.setup_invited"
+  | "auth.setup_completed"
+  | "auth.password_reset_requested"
+  | "auth.password_reset_completed"
+  | "auth.mfa_reset_completed"
   | "invoice.created"
   | "invoice.exported"
   | "invoice.deleted";

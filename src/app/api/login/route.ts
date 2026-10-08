@@ -22,18 +22,6 @@ const SESSION_COOKIE = useSecureCookies
   ? "__Secure-next-auth.session-token"
   : "next-auth.session-token";
 
-// Solo path relativi interni: niente open redirect verso host esterni.
-function safeCallbackUrl(value: unknown): string {
-  if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) {
-    return "/";
-  }
-  return value;
-}
-
-function wantsJson(request: NextRequest): boolean {
-  return request.headers.get("accept")?.includes("application/json") ?? false;
-}
-
 function setSessionCookie(res: NextResponse, encoded: string): void {
   res.cookies.set(SESSION_COOKIE, encoded, {
     httpOnly: true,
@@ -75,55 +63,34 @@ async function mintSessionToken(user: User): Promise<string> {
 }
 
 /**
- * Login utilizzabile anche senza JavaScript (submit nativo del form).
+ * Login via fetch JSON (il form richiede JavaScript).
  * Supporta il secondo fattore (TOTP/backup code) in due passaggi:
  *  - step 1 {email,password} -> {mfaRequired,challenge} se 2FA attiva, altrimenti sessione;
  *  - step 2 {challenge,totpCode} -> sessione.
- * Con Accept: application/json risponde JSON (fetch React), altrimenti 303 (form nativo).
  */
 export async function POST(request: NextRequest) {
   const secret = process.env.NEXTAUTH_SECRET;
   const ip = clientIpFromHeaders(request.headers);
-  const json = wantsJson(request);
 
-  const fail = (code: string, callbackUrl: string) => {
-    if (json) return NextResponse.json({ error: code }, { status: 401 });
-    return NextResponse.redirect(
-      new URL(`/login?error=${code}&callbackUrl=${encodeURIComponent(callbackUrl)}`, request.url),
-      { status: 303 }
-    );
-  };
-  const failConfig = (callbackUrl: string) => {
-    if (json) return NextResponse.json({ error: "Configuration" }, { status: 500 });
-    return NextResponse.redirect(
-      new URL(`/login?error=Configuration&callbackUrl=${encodeURIComponent(callbackUrl)}`, request.url),
-      { status: 303 }
-    );
-  };
+  const fail = (code: string, status = 401) => NextResponse.json({ error: code }, { status });
+  const failConfig = () => NextResponse.json({ error: "Configuration" }, { status: 500 });
 
   // Rate limiting per IP (tutti gli step condividono lo stesso bucket).
   const rl = checkRateLimit(`login:${ip}`, LOGIN_LIMIT, LOGIN_WINDOW_MS);
   if (!rl.allowed) {
     auditEvent({ type: "auth.login_ko", ip, details: { reason: "rate_limited" } });
-    if (json) {
-      return NextResponse.json({ error: "RateLimited" }, { status: 429 });
-    }
-    return NextResponse.redirect(
-      new URL(`/login?error=RateLimited&callbackUrl=${encodeURIComponent("/")}`, request.url),
-      { status: 303 }
-    );
+    return NextResponse.json({ error: "RateLimited" }, { status: 429 });
   }
 
   let body: Record<string, unknown>;
   try {
-    body = json ? await request.json() : Object.fromEntries((await request.formData()).entries());
+    body = await request.json();
   } catch {
-    return fail("CredentialsSignin", "/");
+    return fail("CredentialsSignin");
   }
-  const callbackUrl = safeCallbackUrl(body.callbackUrl);
 
   try {
-    if (!secret) return failConfig(callbackUrl);
+    if (!secret) return failConfig();
 
     // ---- Step 2: verifica secondo fattore ----
     if (typeof body.challenge === "string" && body.challenge) {
@@ -136,17 +103,17 @@ export async function POST(request: NextRequest) {
         };
       } catch {
         auditKo(email, ip, "bad_challenge");
-        return fail("CredentialsSignin", callbackUrl);
+        return fail("CredentialsSignin");
       }
       if (!challenge || challenge.stage !== "mfa" || !challenge.sub) {
         auditKo(email, ip, "bad_challenge");
-        return fail("CredentialsSignin", callbackUrl);
+        return fail("CredentialsSignin");
       }
       const user = await prisma.user.findUnique({ where: { id: challenge.sub } });
       if (!user || !user.totpEnabled || !user.totpSecret) {
         await verifyPasswordConstantTime("x", null);
         auditKo(email, ip, "mfa_user_invalid");
-        return fail("CredentialsSignin", callbackUrl);
+        return fail("CredentialsSignin");
       }
       const code = String(body.totpCode || "").trim();
       let codeOk = verifyTotpCode(await openTotpSecret(user.totpSecret), code);
@@ -165,16 +132,11 @@ export async function POST(request: NextRequest) {
       }
       if (!codeOk) {
         auditKo(user.email, ip, "mfa_code_invalid");
-        return fail("CredentialsSignin", callbackUrl);
+        return fail("CredentialsSignin");
       }
       const encoded = await mintSessionToken(user);
       auditEvent({ type: "auth.login_ok", actor: user.email, ip, details: { mfa: true } });
-      if (json) {
-        const res = NextResponse.json({ ok: true });
-        setSessionCookie(res, encoded);
-        return res;
-      }
-      const res = NextResponse.redirect(new URL(callbackUrl, request.url), { status: 303 });
+      const res = NextResponse.json({ ok: true });
       setSessionCookie(res, encoded);
       return res;
     }
@@ -186,11 +148,11 @@ export async function POST(request: NextRequest) {
     if (!user) {
       await verifyPasswordConstantTime(password, null);
       auditKo(email || "(vuota)", ip, "bad_credentials");
-      return fail("CredentialsSignin", callbackUrl);
+      return fail("CredentialsSignin");
     }
     if (!(await verifyPasswordConstantTime(password, user.passwordHash))) {
       auditKo(email, ip, "bad_credentials");
-      return fail("CredentialsSignin", callbackUrl);
+      return fail("CredentialsSignin");
     }
 
     if (user.totpEnabled) {
@@ -200,29 +162,17 @@ export async function POST(request: NextRequest) {
         maxAge: MFA_CHALLENGE_MAX_AGE,
       });
       auditEvent({ type: "auth.mfa_challenge", actor: user.email, ip });
-      if (json) return NextResponse.json({ mfaRequired: true, challenge });
-      return NextResponse.redirect(
-        new URL(
-          `/login?mfa=1&challenge=${encodeURIComponent(challenge)}&callbackUrl=${encodeURIComponent(callbackUrl)}`,
-          request.url
-        ),
-        { status: 303 }
-      );
+      return NextResponse.json({ mfaRequired: true, challenge });
     }
 
     const encoded = await mintSessionToken(user);
     auditEvent({ type: "auth.login_ok", actor: user.email, ip });
-    if (json) {
-      const res = NextResponse.json({ ok: true });
-      setSessionCookie(res, encoded);
-      return res;
-    }
-    const res = NextResponse.redirect(new URL(callbackUrl, request.url), { status: 303 });
+    const res = NextResponse.json({ ok: true });
     setSessionCookie(res, encoded);
     return res;
   } catch (error) {
     console.error("Error in /api/login:", error);
-    return failConfig(callbackUrl);
+    return failConfig();
   }
 }
 
