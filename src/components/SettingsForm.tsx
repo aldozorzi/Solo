@@ -12,6 +12,7 @@ import { Separator } from '@/components/ui/separator';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { isValidCodiceFiscale, isValidPartitaIVA } from '@/lib/fiscal-code';
+import { MfaSettings } from './MfaSettings';
 
 const settingsSchema = z.object({
   businessName: z.string().min(1, 'Denominazione obbligatoria'),
@@ -122,6 +123,7 @@ export function SettingsForm({ onSettingsChange }: SettingsFormProps) {
   }
 
   return (
+    <>
     <Card className="max-w-2xl mx-auto">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
@@ -258,5 +260,7 @@ export function SettingsForm({ onSettingsChange }: SettingsFormProps) {
         </form>
       </CardContent>
     </Card>
+    <MfaSettings />
+    </>
   );
 }

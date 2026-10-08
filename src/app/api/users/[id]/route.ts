@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { prisma } from '@/lib/prisma';
 import { z } from 'zod';
-import { hashPassword } from '@/lib/auth';
+import { hashPassword, verifyPasswordConstantTime } from '@/lib/auth';
 import { authOptions } from '@/lib/auth';
+import { auditEvent } from '@/lib/audit';
 import { isValidCodiceFiscale, isValidPartitaIVA } from '@/lib/fiscal-code';
 
 const userUpdateSchema = z.object({
@@ -32,7 +33,9 @@ const userUpdateSchema = z.object({
   province: z.string().length(2).optional(),
   country: z.string().optional(),
   taxRegime: z.enum(['FORFETTARIO', 'ORDINARIO']).optional(),
-  password: z.string().min(8).optional(),
+  password: z.string().min(12, 'Password minima 12 caratteri').optional(),
+  currentPassword: z.string().optional(),
+  totpReset: z.boolean().optional(),
 });
 
 async function getUserId(): Promise<string> {
@@ -119,10 +122,32 @@ export async function PUT(
       }
     }
 
+    // Step-up authentication: cambio password e reset 2FA richiedono
+    // la password corrente del richiedente (admin che esegue l'operazione).
+    if (data.password || data.totpReset) {
+      if (!data.currentPassword) {
+        return NextResponse.json({ error: 'Conferma la tua password per procedere' }, { status: 403 });
+      }
+      const requester = await prisma.user.findUnique({ where: { id: userId } });
+      if (!requester || !(await verifyPasswordConstantTime(data.currentPassword, requester.passwordHash))) {
+        return NextResponse.json({ error: 'Password di conferma errata' }, { status: 403 });
+      }
+    }
+
     const updateData: any = { ...data };
+    delete updateData.currentPassword;
+    delete updateData.totpReset;
     if (data.password) {
       updateData.passwordHash = await hashPassword(data.password);
       delete updateData.password;
+      // Invalida tutte le sessioni esistenti dell'utente modificato.
+      updateData.sessionVersion = { increment: 1 };
+    }
+    if (data.totpReset) {
+      updateData.totpSecret = null;
+      updateData.totpEnabled = false;
+      updateData.totpBackupCodes = [];
+      updateData.sessionVersion = { increment: 1 };
     }
 
     const user = await prisma.user.update({
@@ -143,6 +168,17 @@ export async function PUT(
         country: true,
         taxRegime: true,
         createdAt: true,
+      },
+    });
+
+    auditEvent({
+      type: 'user.updated',
+      actor: userId,
+      target: id,
+      details: {
+        fields: Object.keys(data).filter((k) => k !== 'currentPassword'),
+        passwordChanged: !!data.password,
+        totpReset: !!data.totpReset,
       },
     });
 
@@ -175,12 +211,30 @@ export async function DELETE(
     }
 
     const { id } = await params;
-    
+
     if (id === userId) {
       return NextResponse.json({ error: 'Non puoi eliminare te stesso' }, { status: 400 });
     }
 
+    // Step-up authentication: l'eliminazione richiede la password corrente del richiedente.
+    let currentPassword: unknown;
+    try {
+      const deleteBody = await request.json();
+      currentPassword = deleteBody?.currentPassword;
+    } catch {
+      currentPassword = undefined;
+    }
+    const requester = await prisma.user.findUnique({ where: { id: userId } });
+    if (
+      typeof currentPassword !== 'string' ||
+      !requester ||
+      !(await verifyPasswordConstantTime(currentPassword, requester.passwordHash))
+    ) {
+      return NextResponse.json({ error: 'Conferma la tua password per procedere' }, { status: 403 });
+    }
+
     await prisma.user.delete({ where: { id } });
+    auditEvent({ type: 'user.deleted', actor: userId, target: id });
     return NextResponse.json({ success: true });
   } catch (error) {
     if (error instanceof Error && error.message === 'Non autenticato') {

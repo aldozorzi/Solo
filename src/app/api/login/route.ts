@@ -1,9 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { encode } from "next-auth/jwt";
+import { decode, encode, type JWT } from "next-auth/jwt";
 import { prisma } from "@/lib/prisma";
+import type { User } from "@prisma/client";
 import { verifyPasswordConstantTime } from "@/lib/auth";
+import { verifyTotpCode } from "@/lib/totp";
+import { checkRateLimit, clientIpFromHeaders } from "@/lib/rate-limit";
+import { auditEvent, auditWebhookAlert, noteAuthFailure } from "@/lib/audit";
+import { openSecret as openTotpSecret } from "@/lib/secret-box";
+import bcrypt from "bcryptjs";
 
 const SESSION_MAX_AGE = 30 * 24 * 60 * 60; // 30 giorni, come in authOptions
+const MFA_CHALLENGE_MAX_AGE = 5 * 60; // 5 minuti
+const LOGIN_LIMIT = 10;
+const LOGIN_WINDOW_MS = 10 * 60 * 1000;
 
 // Stessa logica di NextAuth (getToken): cookie __Secure- solo su HTTPS,
 // altrimenti nome semplice. Così resta coerente in sviluppo (HTTP) e produzione (HTTPS).
@@ -21,41 +30,27 @@ function safeCallbackUrl(value: unknown): string {
   return value;
 }
 
-/**
- * Login utilizzabile anche senza JavaScript (submit nativo del form).
- * Verifica le credenziali e imposta direttamente il cookie di sessione JWT
- * nello stesso formato usato da NextAuth, così getServerSession/getToken
- * lo riconoscono senza modifiche al resto dell'app.
- */
-export async function POST(request: NextRequest) {
+function wantsJson(request: NextRequest): boolean {
+  return request.headers.get("accept")?.includes("application/json") ?? false;
+}
+
+function setSessionCookie(res: NextResponse, encoded: string): void {
+  res.cookies.set(SESSION_COOKIE, encoded, {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    secure: useSecureCookies,
+    maxAge: SESSION_MAX_AGE,
+  });
+}
+
+async function mintSessionToken(user: User): Promise<string> {
   const secret = process.env.NEXTAUTH_SECRET;
-
-  let callbackUrl = "/";
-  try {
-    const form = await request.formData();
-    callbackUrl = safeCallbackUrl(form.get("callbackUrl"));
-    const email = String(form.get("email") || "").trim();
-    const password = String(form.get("password") || "");
-
-    const fail = () =>
-      NextResponse.redirect(
-        new URL(`/login?error=CredentialsSignin&callbackUrl=${encodeURIComponent(callbackUrl)}`, request.url),
-        { status: 303 }
-      );
-
-    if (!secret) return fail();
-
-    // Il confronto bcrypt gira SEMPRE (anche con email vuota o utente inesistente):
-    // tempi di risposta uniformi, nessun oracolo su quali email sono registrate.
-    const user = email ? await prisma.user.findUnique({ where: { email } }) : null;
-    if (!user) {
-      await verifyPasswordConstantTime(password, null);
-      return fail();
-    }
-    if (!(await verifyPasswordConstantTime(password, user.passwordHash))) return fail();
-
-    // Stessi campi che il callback jwt() di authOptions mette nel token al login.
-    const token = {
+  if (!secret) throw new Error("NEXTAUTH_SECRET non configurata");
+  // Stessi campi che il callback jwt() di authOptions mette nel token al login,
+  // più sessionVersion (revoca) e mfa (secondo fattore completato).
+  return encode({
+    token: {
       sub: user.id,
       id: user.id,
       email: user.email,
@@ -71,23 +66,171 @@ export async function POST(request: NextRequest) {
       province: user.province,
       taxRegime: user.taxRegime,
       senderType: user.senderType,
-    };
-    const encoded = await encode({ token, secret, maxAge: SESSION_MAX_AGE });
+      sessionVersion: user.sessionVersion,
+      mfa: true,
+    },
+    secret,
+    maxAge: SESSION_MAX_AGE,
+  });
+}
 
-    const res = NextResponse.redirect(new URL(callbackUrl, request.url), { status: 303 });
-    res.cookies.set(SESSION_COOKIE, encoded, {
-      httpOnly: true,
-      sameSite: "lax",
-      path: "/",
-      secure: useSecureCookies,
-      maxAge: SESSION_MAX_AGE,
-    });
-    return res;
-  } catch (error) {
-    console.error("Error in /api/login:", error);
+/**
+ * Login utilizzabile anche senza JavaScript (submit nativo del form).
+ * Supporta il secondo fattore (TOTP/backup code) in due passaggi:
+ *  - step 1 {email,password} -> {mfaRequired,challenge} se 2FA attiva, altrimenti sessione;
+ *  - step 2 {challenge,totpCode} -> sessione.
+ * Con Accept: application/json risponde JSON (fetch React), altrimenti 303 (form nativo).
+ */
+export async function POST(request: NextRequest) {
+  const secret = process.env.NEXTAUTH_SECRET;
+  const ip = clientIpFromHeaders(request.headers);
+  const json = wantsJson(request);
+
+  const fail = (code: string, callbackUrl: string) => {
+    if (json) return NextResponse.json({ error: code }, { status: 401 });
+    return NextResponse.redirect(
+      new URL(`/login?error=${code}&callbackUrl=${encodeURIComponent(callbackUrl)}`, request.url),
+      { status: 303 }
+    );
+  };
+  const failConfig = (callbackUrl: string) => {
+    if (json) return NextResponse.json({ error: "Configuration" }, { status: 500 });
     return NextResponse.redirect(
       new URL(`/login?error=Configuration&callbackUrl=${encodeURIComponent(callbackUrl)}`, request.url),
       { status: 303 }
     );
+  };
+
+  // Rate limiting per IP (tutti gli step condividono lo stesso bucket).
+  const rl = checkRateLimit(`login:${ip}`, LOGIN_LIMIT, LOGIN_WINDOW_MS);
+  if (!rl.allowed) {
+    auditEvent({ type: "auth.login_ko", ip, details: { reason: "rate_limited" } });
+    if (json) {
+      return NextResponse.json({ error: "RateLimited" }, { status: 429 });
+    }
+    return NextResponse.redirect(
+      new URL(`/login?error=RateLimited&callbackUrl=${encodeURIComponent("/")}`, request.url),
+      { status: 303 }
+    );
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = json ? await request.json() : Object.fromEntries((await request.formData()).entries());
+  } catch {
+    return fail("CredentialsSignin", "/");
+  }
+  const callbackUrl = safeCallbackUrl(body.callbackUrl);
+
+  try {
+    if (!secret) return failConfig(callbackUrl);
+
+    // ---- Step 2: verifica secondo fattore ----
+    if (typeof body.challenge === "string" && body.challenge) {
+      const email = typeof body.email === "string" ? body.email.trim() : "";
+      let challenge: { sub?: string; stage?: string };
+      try {
+        challenge = (await decode({ token: body.challenge, secret })) as {
+          sub?: string;
+          stage?: string;
+        };
+      } catch {
+        auditKo(email, ip, "bad_challenge");
+        return fail("CredentialsSignin", callbackUrl);
+      }
+      if (!challenge || challenge.stage !== "mfa" || !challenge.sub) {
+        auditKo(email, ip, "bad_challenge");
+        return fail("CredentialsSignin", callbackUrl);
+      }
+      const user = await prisma.user.findUnique({ where: { id: challenge.sub } });
+      if (!user || !user.totpEnabled || !user.totpSecret) {
+        await verifyPasswordConstantTime("x", null);
+        auditKo(email, ip, "mfa_user_invalid");
+        return fail("CredentialsSignin", callbackUrl);
+      }
+      const code = String(body.totpCode || "").trim();
+      let codeOk = verifyTotpCode(await openTotpSecret(user.totpSecret), code);
+      if (!codeOk && code) {
+        // Prova i backup code monouso (hash bcrypt).
+        for (const hash of user.totpBackupCodes) {
+          if (await bcrypt.compare(code.replace(/\s+/g, "").toUpperCase(), hash)) {
+            codeOk = true;
+            await prisma.user.update({
+              where: { id: user.id },
+              data: { totpBackupCodes: user.totpBackupCodes.filter((h) => h !== hash) },
+            });
+            break;
+          }
+        }
+      }
+      if (!codeOk) {
+        auditKo(user.email, ip, "mfa_code_invalid");
+        return fail("CredentialsSignin", callbackUrl);
+      }
+      const encoded = await mintSessionToken(user);
+      auditEvent({ type: "auth.login_ok", actor: user.email, ip, details: { mfa: true } });
+      if (json) {
+        const res = NextResponse.json({ ok: true });
+        setSessionCookie(res, encoded);
+        return res;
+      }
+      const res = NextResponse.redirect(new URL(callbackUrl, request.url), { status: 303 });
+      setSessionCookie(res, encoded);
+      return res;
+    }
+
+    // ---- Step 1: email + password (confronto sempre eseguito: tempi uniformi) ----
+    const email = typeof body.email === "string" ? body.email.trim() : "";
+    const password = typeof body.password === "string" ? body.password : "";
+    const user = email ? await prisma.user.findUnique({ where: { email } }) : null;
+    if (!user) {
+      await verifyPasswordConstantTime(password, null);
+      auditKo(email || "(vuota)", ip, "bad_credentials");
+      return fail("CredentialsSignin", callbackUrl);
+    }
+    if (!(await verifyPasswordConstantTime(password, user.passwordHash))) {
+      auditKo(email, ip, "bad_credentials");
+      return fail("CredentialsSignin", callbackUrl);
+    }
+
+    if (user.totpEnabled) {
+      const challenge = await encode({
+        token: { sub: user.id, stage: "mfa" } as unknown as JWT,
+        secret,
+        maxAge: MFA_CHALLENGE_MAX_AGE,
+      });
+      auditEvent({ type: "auth.mfa_challenge", actor: user.email, ip });
+      if (json) return NextResponse.json({ mfaRequired: true, challenge });
+      return NextResponse.redirect(
+        new URL(
+          `/login?mfa=1&challenge=${encodeURIComponent(challenge)}&callbackUrl=${encodeURIComponent(callbackUrl)}`,
+          request.url
+        ),
+        { status: 303 }
+      );
+    }
+
+    const encoded = await mintSessionToken(user);
+    auditEvent({ type: "auth.login_ok", actor: user.email, ip });
+    if (json) {
+      const res = NextResponse.json({ ok: true });
+      setSessionCookie(res, encoded);
+      return res;
+    }
+    const res = NextResponse.redirect(new URL(callbackUrl, request.url), { status: 303 });
+    setSessionCookie(res, encoded);
+    return res;
+  } catch (error) {
+    console.error("Error in /api/login:", error);
+    return failConfig(callbackUrl);
+  }
+}
+
+function auditKo(actor: string, ipAddr: string, reason: string): void {
+  auditEvent({ type: "auth.login_ko", actor, ip: ipAddr, details: { reason } });
+  if (noteAuthFailure(ipAddr) === "alert") {
+    const alert = { type: "auth.alert_bruteforce" as const, ip: ipAddr, details: { reason } };
+    auditEvent(alert);
+    auditWebhookAlert(alert);
   }
 }

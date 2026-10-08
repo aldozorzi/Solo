@@ -48,6 +48,8 @@ export type UserSession = {
   province?: string | null;
   taxRegime: TaxRegime;
   senderType: SenderType;
+  sessionVersion?: number;
+  mfa?: boolean;
 };
 
 export const CLIENT_TYPE_LABELS: Record<ClientType, string> = {

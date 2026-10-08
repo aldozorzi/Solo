@@ -77,23 +77,39 @@ npm run test:xml:files  # verifica testuale più 36 XML in test-output/
 
 | Variabile | Descrizione | Obbligatoria |
 |-----------|-------------|--------------|
-| `DATABASE_URL` | Connection string NeonDB/PostgreSQL | Sì |
-| `SENDER_NAME` | Denominazione cedente/prestatore | Sì |
-| `SENDER_VAT_NUMBER` | Partita IVA cedente | Sì |
-| `SENDER_TAX_CODE` | Codice Fiscale cedente | Sì |
-| `SENDER_ADDRESS` | Indirizzo sede | Sì |
-| `SENDER_NUMBER` | Numero civico | Sì |
-| `SENDER_ZIP` | CAP | Sì |
-| `SENDER_CITY` | Comune | Sì |
-| `SENDER_PROVINCE` | Provincia (sigla) | Sì |
-| `SENDER_EMAIL` | Email (opzionale) | No |
-| `SENDER_PHONE` | Telefono (opzionale) | No |
+| `DATABASE_URL` | Connection string PostgreSQL (locale: Docker; produzione: Neon pooled) | Sì |
+| `NEXTAUTH_SECRET` | Segreto firma JWT (min. 32 caratteri casuali) | Sì |
+| `NEXTAUTH_URL` | Solo produzione: URL pubblico https. In locale va **lasciata non impostata** | Produzione |
+| `AUTH_TRUST_HOST` | `true` in sviluppo locale (origin dall'Host per IP LAN variabili) | Locale |
+| `AUDIT_WEBHOOK_URL` | (Opzionale) endpoint che riceve gli alert brute-force | No |
+| `AUDIT_LOG_PATH` | (Opzionale) percorso file audit JSONL | No |
+
+## Sicurezza
+
+Dettagli, decisioni esplicite e procedure (backup/restore, rotazioni, incidenti):
+[`docs/SECURITY.md`](docs/SECURITY.md).
+
+```bash
+./scripts/backup-db.sh                      # dump gzip in backups/ (ultimi 14)
+CONFIRM_RESTORE=I-UNDERSTAND ./scripts/restore-db.sh backups/solo-YYYYMMDD-HHMMSS.sql.gz
+```
 
 ## Deploy su Vercel
 
-1. Collega repository GitHub a Vercel
-2. Configura variabili d'ambiente in Vercel Dashboard
-3. Deploy automatico ad ogni push su `main`
+1. Crea il progetto su NeonDB **nella stessa region delle function Vercel**
+   (oggi `vercel.json` dice `iad1`: o il DB sta lì vicino o si sposta la region).
+2. Collega repository GitHub a Vercel (o installa l'integrazione Neon↔Vercel).
+3. Variabili in Vercel Dashboard:
+   - `DATABASE_URL` = connection string **pooled** di Neon **con flag PgBouncer**
+     (`...?pgbouncer=true`): senza, Prisma su serverless fallisce a caso con
+     errori "prepared statement".
+   - `DIRECT_URL` = connection string **diretta** (solo per le migration).
+   - `NEXTAUTH_SECRET` (segreto robusto, diverso da quello locale),
+     `NEXTAUTH_URL=https://<tuo-dominio>`; **niente** `AUTH_TRUST_HOST`.
+4. Pipeline: `prisma migrate deploy` (con `DIRECT_URL`) **prima** di `npm run build`,
+   a ogni deploy. Mai `db push` / `--force-reset` su produzione.
+5. Verifica post-deploy: header di sicurezza presenti, login + 2FA, PITR/retention
+   backup attiva su Neon, alert Dependabot abilitati su GitHub.
 
 ## Struttura Progetto
 

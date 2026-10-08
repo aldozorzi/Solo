@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { z } from 'zod';
 import { calculateInvoiceTotals } from '@/lib/tax';
 import { authOptions } from '@/lib/auth';
+import { auditEvent } from '@/lib/audit';
 
 const invoiceItemSchema = z.object({
   description: z.string().min(1),
@@ -160,6 +161,13 @@ export async function POST(request: NextRequest) {
         items: true,
         payments: true,
       },
+    });
+
+    auditEvent({
+      type: 'invoice.created',
+      actor: userId,
+      target: invoice.id,
+      details: { number: invoice.number, year: invoice.year, clientId: data.clientId },
     });
 
     return NextResponse.json(invoice, { status: 201 });

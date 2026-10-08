@@ -38,6 +38,12 @@ export const authOptions: NextAuthOptions = {
           throw new Error("Credenziali non valide");
         }
 
+        // Il flusso a due passaggi vive su /api/login: questo percorso legacy
+        // non può completare la MFA, quindi per gli utenti con 2FA è chiuso.
+        if (user.totpEnabled) {
+          throw new Error("Verifica in due passaggi richiesta");
+        }
+
         return {
           id: user.id,
           email: user.email,
@@ -53,6 +59,8 @@ export const authOptions: NextAuthOptions = {
           province: user.province,
           taxRegime: user.taxRegime,
           senderType: user.senderType,
+          sessionVersion: user.sessionVersion,
+          mfa: !user.totpEnabled,
         };
       },
     }),
@@ -76,10 +84,39 @@ export const authOptions: NextAuthOptions = {
         token.province = (user as any).province;
         token.taxRegime = (user as any).taxRegime;
         token.senderType = (user as any).senderType;
+        token.sessionVersion = (user as any).sessionVersion ?? 0;
+        token.mfa = (user as any).mfa ?? true;
       }
       return token;
     },
     async session({ session, token }) {
+      // Enforcement centralizzato: il token è valido solo se la sua
+      // sessionVersion coincide con quella corrente nel DB. Così un cambio
+      // password (che incrementa la versione) invalida tutte le sessioni
+      // precedenti, e i token emessi prima di questa modifica (senza versione)
+      // richiedono un nuovo login. Gira a ogni getServerSession().
+      const t = token as unknown as {
+        sub?: string;
+        sessionVersion?: unknown;
+      };
+      let revoked = typeof t.sessionVersion !== "number" || !t.sub;
+      if (!revoked) {
+        try {
+          const user = await prisma.user.findUnique({
+            where: { id: t.sub as string },
+            select: { sessionVersion: true },
+          });
+          revoked = !user || user.sessionVersion !== t.sessionVersion;
+        } catch {
+          // In caso di errore DB non concedere l'accesso per default.
+          revoked = true;
+        }
+      }
+      if (revoked) {
+        // Sessione senza utente: tutti i guard (session?.user?.id) falliscono
+        // in modo chiuso (401/redirect login), senza eccezioni 500.
+        return { ...session, user: undefined } as unknown as typeof session;
+      }
       if (session.user) {
         (session.user as any).id = token.id;
         (session.user as any).role = token.role;
@@ -93,6 +130,8 @@ export const authOptions: NextAuthOptions = {
         (session.user as any).province = token.province;
         (session.user as any).taxRegime = token.taxRegime;
         (session.user as any).senderType = token.senderType;
+        (session.user as any).sessionVersion = (token as any).sessionVersion;
+        (session.user as any).mfa = (token as any).mfa ?? true;
       }
       return session;
     },

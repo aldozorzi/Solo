@@ -2,6 +2,9 @@ import { prisma } from "@/lib/prisma";
 import { Suspense } from "react";
 import LoginForm from "./LoginForm";
 
+// Sempre dinamica: niente prerender e nessuna dipendenza dal DB in build.
+export const dynamic = "force-dynamic";
+
 export default async function LoginPage() {
   const userCount = await prisma.user.count();
 
