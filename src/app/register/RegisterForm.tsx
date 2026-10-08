@@ -47,8 +47,8 @@ export default function RegisterForm() {
       return;
     }
 
-    if (formData.password.length < 8) {
-      setError('La password deve essere di almeno 8 caratteri');
+    if (formData.password.length < 12) {
+      setError('La password deve essere di almeno 12 caratteri');
       return;
     }
 
@@ -161,7 +161,7 @@ export default function RegisterForm() {
                     required
                     disabled={loading}
                     className="mt-1"
-                    minLength={8}
+                    minLength={12}
                   />
                 </div>
                 <div>

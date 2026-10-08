@@ -53,7 +53,14 @@ model User {
   province      String?
   taxRegime     TaxRegime   @default(FORFETTARIO)
   senderType    SenderType  @default(LIBERO_PROFESSIONISTA)
-  
+
+  // Sicurezza sessioni: incrementato a ogni cambio password (invalida i JWT precedenti).
+  sessionVersion   Int      @default(0)
+  // Autenticazione a due fattori (TOTP): secret cifrato, mai in chiaro nel DB.
+  totpSecret       String?
+  totpEnabled      Boolean  @default(false)
+  totpBackupCodes  String[] @default([])
+
   clients       Client[]
   payments      Payment[]
   invoices      Invoice[]

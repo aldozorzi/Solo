@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { isValidCodiceFiscale, isValidPartitaIVA } from '@/lib/fiscal-code';
+import { auditEvent } from '@/lib/audit';
 
 const userSettingsSchema = z.object({
   businessName: z.string().min(1, 'Denominazione obbligatoria'),
@@ -115,7 +116,9 @@ export async function PUT(request: NextRequest) {
         senderType: true,
       },
     });
-    
+
+    auditEvent({ type: 'settings.updated', actor: userId, target: userId });
+
     return NextResponse.json({
       senderName: user.businessName,
       senderVat: user.vatNumber,

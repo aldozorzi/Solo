@@ -10,16 +10,6 @@
     }
   },
   "env": {
-    "DATABASE_URL": "@database_url",
-    "SENDER_NAME": "@sender_name",
-    "SENDER_VAT_NUMBER": "@sender_vat_number",
-    "SENDER_TAX_CODE": "@sender_tax_code",
-    "SENDER_ADDRESS": "@sender_address",
-    "SENDER_NUMBER": "@sender_number",
-    "SENDER_ZIP": "@sender_zip",
-    "SENDER_CITY": "@sender_city",
-    "SENDER_PROVINCE": "@sender_province",
-    "SENDER_EMAIL": "@sender_email",
-    "SENDER_PHONE": "@sender_phone"
+    "DATABASE_URL": "@database_url"
   }
 }

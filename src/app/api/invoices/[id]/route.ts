@@ -7,6 +7,7 @@ import { calculateInvoiceTotals } from '@/lib/tax';
 import { generateFatturaPAXml, userToSdiConfig, generateFileName, invoiceProgressivo } from '@/lib/xml-generator';
 import { generateInvoicePdfBuffer, userToSenderInfo } from '@/lib/pdf-generator';
 import { authOptions } from '@/lib/auth';
+import { auditEvent } from '@/lib/audit';
 
 const dateInputSchema = z.string().min(1, 'Data obbligatoria').refine(
   (v) => !Number.isNaN(Date.parse(v)),
@@ -120,6 +121,8 @@ export async function GET(
 
       const fileName = generateFileName(invoice, sdiConfig);
 
+      auditEvent({ type: 'invoice.exported', actor: userId, target: id, details: { format: 'xml' } });
+
       return new NextResponse(xml, {
         headers: {
           'Content-Type': 'application/xml',
@@ -147,6 +150,8 @@ export async function GET(
         totals: pdfTotals,
         sender: senderInfo,
       });
+
+      auditEvent({ type: 'invoice.exported', actor: userId, target: id, details: { format: 'pdf' } });
 
       return new NextResponse(new Uint8Array(buffer), {
         headers: {
@@ -283,8 +288,9 @@ export async function DELETE(
     const { id } = await params;
     
     await verifyInvoiceOwnership(userId, id);
-    
+
     await prisma.invoice.delete({ where: { id } });
+    auditEvent({ type: 'invoice.deleted', actor: userId, target: id });
     return NextResponse.json({ success: true });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') {

@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Edit, Trash2, Shield, UserPlus, Loader2, AlertCircle } from 'lucide-react';
+import { ConfirmPasswordDialog } from './ConfirmPasswordDialog';
 import { UserRole, USER_ROLE_LABELS, TAX_REGIME_LABELS } from '@/types';
 
 interface User {
@@ -52,16 +53,25 @@ const userSchema = z.object({
   province: z.string().length(2, 'Provincia (sigla, 2 caratteri)'),
   country: z.string().min(1).default('IT'),
   taxRegime: z.enum(['FORFETTARIO', 'ORDINARIO']),
-  password: z.string().min(8, 'Password minima 8 caratteri').optional().or(z.literal('')),
+  password: z.string().min(12, 'Password minima 12 caratteri').optional().or(z.literal('')),
 });
 
 type UserFormData = z.infer<typeof userSchema>;
+
+type ConfirmAction =
+  | { kind: 'delete'; userId: string }
+  | { kind: 'save' }
+  | { kind: 'reset-mfa'; userId: string };
 
 export function UserManagement({ onRefresh }: UserManagementProps) {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [pendingSaveData, setPendingSaveData] = useState<UserFormData | null>(null);
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -100,67 +110,125 @@ export function UserManagement({ onRefresh }: UserManagementProps) {
     },
   });
 
+  const doSave = async (data: UserFormData, currentPassword?: string) => {
+    const isEditing = !!editingUser;
+    const url = isEditing ? `/api/users/${editingUser.id}` : '/api/users';
+    const method = isEditing ? 'PUT' : 'POST';
+
+    const submitData: Record<string, unknown> = { ...data };
+    if (!submitData.password) {
+      delete submitData.password;
+    }
+    if (currentPassword) {
+      submitData.currentPassword = currentPassword;
+    }
+
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(submitData),
+    });
+
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || 'Errore salvataggio');
+    }
+
+    onRefresh();
+    fetchUsers();
+    form.reset({
+      email: '',
+      name: '',
+      businessName: '',
+      vatNumber: '',
+      taxCode: '',
+      address: '',
+      city: '',
+      zipCode: '',
+      province: '',
+      country: 'IT',
+      taxRegime: 'FORFETTARIO',
+      password: '',
+    });
+    setEditingUser(null);
+  };
+
   const handleSubmit = async (data: UserFormData) => {
+    // Step-up: impostare una password richiede conferma con la propria.
+    if (data.password) {
+      setPendingSaveData(data);
+      setConfirmError(null);
+      setConfirmAction({ kind: 'save' });
+      return;
+    }
     try {
-      const isEditing = !!editingUser;
-      const url = isEditing ? `/api/users/${editingUser.id}` : '/api/users';
-      const method = isEditing ? 'PUT' : 'POST';
-
-      const submitData = { ...data };
-      if (!submitData.password) {
-        delete submitData.password;
-      }
-
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(submitData),
-      });
-
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.error || 'Errore salvataggio');
-      }
-
-      onRefresh();
-      fetchUsers();
-      form.reset({
-        email: '',
-        name: '',
-        businessName: '',
-        vatNumber: '',
-        taxCode: '',
-        address: '',
-        city: '',
-        zipCode: '',
-        province: '',
-        country: 'IT',
-        taxRegime: 'FORFETTARIO',
-        password: '',
-      });
-      setEditingUser(null);
+      await doSave(data);
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Errore sconosciuto');
     }
   };
 
-  const handleDelete = async (userId: string) => {
-    if (!confirm('Eliminare questo utente? Verranno eliminati anche tutti i suoi dati (clienti, incassi, fatture).')) return;
-    
+  const doDelete = async (userId: string, currentPassword: string) => {
     setDeletingUserId(userId);
     try {
-      const res = await fetch(`/api/users/${userId}`, { method: 'DELETE' });
-      if (res.ok) {
-        onRefresh();
-        fetchUsers();
-      } else {
+      const res = await fetch(`/api/users/${userId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword }),
+      });
+      if (!res.ok) {
         const error = await res.json();
-        alert(error.error || 'Errore eliminazione');
+        throw new Error(error.error || 'Errore eliminazione');
       }
-    } catch (error) {
-      alert('Errore eliminazione');
+      onRefresh();
+      fetchUsers();
     } finally {
       setDeletingUserId(null);
+    }
+  };
+
+  const doResetMfa = async (userId: string, currentPassword: string) => {
+    const res = await fetch(`/api/users/${userId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ totpReset: true, currentPassword }),
+    });
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || 'Errore reset 2FA');
+    }
+    onRefresh();
+    fetchUsers();
+  };
+
+  const handleDelete = (userId: string) => {
+    setConfirmError(null);
+    setConfirmAction({ kind: 'delete', userId });
+  };
+
+  const handleResetMfa = (userId: string) => {
+    setConfirmError(null);
+    setConfirmAction({ kind: 'reset-mfa', userId });
+  };
+
+  const handleConfirmPassword = async (password: string) => {
+    if (!confirmAction) return;
+    setConfirmBusy(true);
+    setConfirmError(null);
+    try {
+      if (confirmAction.kind === 'delete') {
+        await doDelete(confirmAction.userId, password);
+      } else if (confirmAction.kind === 'reset-mfa') {
+        await doResetMfa(confirmAction.userId, password);
+      } else if (pendingSaveData) {
+        await doSave(pendingSaveData, password);
+      }
+      setConfirmAction(null);
+      setPendingSaveData(null);
+    } catch (error) {
+      setConfirmError(error instanceof Error ? error.message : 'Errore sconosciuto');
+    } finally {
+      setConfirmBusy(false);
     }
   };
 
@@ -310,7 +378,7 @@ export function UserManagement({ onRefresh }: UserManagementProps) {
                   id="password"
                   type="password"
                   {...form.register('password')}
-                  placeholder={editingUser ? 'Lascia vuoto per mantenere la password attuale' : 'Minimo 8 caratteri'}
+                  placeholder={editingUser ? 'Lascia vuoto per mantenere la password attuale' : 'Minimo 12 caratteri'}
                 />
                 {form.formState.errors.password && (
                   <p className="text-sm text-red-500">{form.formState.errors.password.message}</p>
@@ -318,6 +386,16 @@ export function UserManagement({ onRefresh }: UserManagementProps) {
               </div>
 
               <div className="flex justify-end gap-2 pt-4">
+                {editingUser && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="mr-auto text-red-600"
+                    onClick={() => handleResetMfa(editingUser.id)}
+                  >
+                    Reset 2FA
+                  </Button>
+                )}
                 <Button type="button" variant="outline" onClick={() => { setEditingUser(null); form.reset(); }}>
                   Annulla
                 </Button>
@@ -412,6 +490,39 @@ export function UserManagement({ onRefresh }: UserManagementProps) {
           )}
         </CardContent>
       </Card>
+
+      <ConfirmPasswordDialog
+        open={confirmAction !== null}
+        title={
+          confirmAction?.kind === 'delete'
+            ? 'Elimina utente'
+            : confirmAction?.kind === 'reset-mfa'
+              ? 'Reset verifica in due passaggi'
+              : 'Conferma modifica'
+        }
+        description={
+          confirmAction?.kind === 'delete'
+            ? 'Verranno eliminati anche tutti i suoi dati (clienti, incassi, fatture). Inserisci la tua password per confermare.'
+            : confirmAction?.kind === 'reset-mfa'
+              ? "La verifica in due passaggi dell'utente verrà disattivata. Inserisci la tua password per confermare."
+              : 'Stai impostando una nuova password. Inserisci la tua password per confermare.'
+        }
+        confirmLabel={
+          confirmAction?.kind === 'delete'
+            ? 'Elimina'
+            : confirmAction?.kind === 'reset-mfa'
+              ? 'Reset 2FA'
+              : 'Salva'
+        }
+        busy={confirmBusy}
+        error={confirmError}
+        onConfirm={handleConfirmPassword}
+        onCancel={() => {
+          setConfirmAction(null);
+          setPendingSaveData(null);
+          setConfirmError(null);
+        }}
+      />
     </div>
   );
 }

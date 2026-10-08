@@ -4,12 +4,13 @@ import { prisma } from '@/lib/prisma';
 import { z } from 'zod';
 import { hashPassword } from '@/lib/auth';
 import { authOptions } from '@/lib/auth';
+import { auditEvent } from '@/lib/audit';
 import { isValidCodiceFiscale, isValidPartitaIVA } from '@/lib/fiscal-code';
 
 const registerSchema = z.object({
   email: z.string().email('Email non valida'),
   name: z.string().min(1, 'Nome obbligatorio'),
-  password: z.string().min(8, 'Password minima 8 caratteri'),
+  password: z.string().min(12, 'Password minima 12 caratteri'),
   businessName: z.string().min(1, 'Denominazione obbligatoria'),
   vatNumber: z
     .string()
@@ -76,12 +77,14 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const userCount = await prisma.user.count();
-    
+
+    let actorId: string | undefined;
     if (userCount > 0) {
       const session = await getServerSession(authOptions);
       if (!session?.user?.id || session.user.role !== 'ADMIN') {
         return NextResponse.json({ error: 'Registrazione non consentita: utenti già esistenti' }, { status: 403 });
       }
+      actorId = session.user.id;
     }
 
     const body = await request.json();
@@ -132,6 +135,13 @@ export async function POST(request: NextRequest) {
         taxRegime: true,
         createdAt: true,
       },
+    });
+
+    auditEvent({
+      type: 'user.created',
+      actor: actorId,
+      target: user.id,
+      details: { email: user.email, role: user.role },
     });
 
     return NextResponse.json(user, { status: 201 });
