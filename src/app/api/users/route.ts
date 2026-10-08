@@ -2,15 +2,21 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { prisma } from '@/lib/prisma';
 import { z } from 'zod';
+import { randomBytes } from 'node:crypto';
 import { hashPassword } from '@/lib/auth';
 import { authOptions } from '@/lib/auth';
 import { auditEvent } from '@/lib/audit';
+import { createRecoveryToken, invalidateUserRecoveryTokens } from '@/lib/account-recovery';
+import { sendMail } from '@/lib/mail';
+import { setupAccountMail } from '@/lib/mail-templates';
 import { isValidCodiceFiscale, isValidPartitaIVA } from '@/lib/fiscal-code';
 
 const registerSchema = z.object({
   email: z.string().email('Email non valida'),
   name: z.string().min(1, 'Nome obbligatorio'),
-  password: z.string().min(12, 'Password minima 12 caratteri'),
+  // Obbligatoria solo al bootstrap (primo utente); dopo, la password iniziale
+  // viene sempre impostata dall'utente via email: l'admin non la conosce mai.
+  password: z.string().min(12, 'Password minima 12 caratteri').optional(),
   businessName: z.string().min(1, 'Denominazione obbligatoria'),
   vatNumber: z
     .string()
@@ -59,6 +65,7 @@ export async function GET() {
         province: true,
         country: true,
         taxRegime: true,
+        senderType: true,
         createdAt: true,
         _count: {
           select: { clients: true, invoices: true },
@@ -98,7 +105,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Email già registrata' }, { status: 400 });
     }
 
-    const passwordHash = await hashPassword(data.password);
+    if (userCount === 0 && !data.password) {
+      return NextResponse.json({ error: 'Password obbligatoria per il primo utente' }, { status: 400 });
+    }
+    if (userCount > 0 && data.password) {
+      // L'admin non imposta mai password altrui: solo invito via email.
+      return NextResponse.json(
+        { error: 'La password iniziale viene impostata dall\u2019utente via email di attivazione' },
+        { status: 400 }
+      );
+    }
+
+    const passwordHash =
+      userCount === 0
+        ? await hashPassword(data.password as string)
+        : await hashPassword(randomBytes(32).toString('hex')); // account bloccato
 
     const role = userCount === 0 ? 'ADMIN' : 'USER';
 
@@ -133,6 +154,7 @@ export async function POST(request: NextRequest) {
         province: true,
         country: true,
         taxRegime: true,
+        senderType: true,
         createdAt: true,
       },
     });
@@ -143,6 +165,22 @@ export async function POST(request: NextRequest) {
       target: user.id,
       details: { email: user.email, role: user.role },
     });
+
+    // Account creati da admin: invito di attivazione via email (l'account nasce
+    // bloccato). Se l'invio fallisce, rollback completo: niente account orfani.
+    if (userCount > 0) {
+      try {
+        const token = await createRecoveryToken(user.id, 'setup');
+        const { sent } = await sendMail({ to: user.email, ...setupAccountMail(user.name, token) });
+        if (!sent) throw new Error('Invio email fallito');
+        auditEvent({ type: 'auth.setup_invited', actor: actorId, target: user.id });
+      } catch (error) {
+        await invalidateUserRecoveryTokens(user.id).catch(() => undefined);
+        await prisma.user.delete({ where: { id: user.id } }).catch(() => undefined);
+        console.error('Error sending setup invite, rolled back:', error);
+        return NextResponse.json({ error: "Impossibile inviare l'email di attivazione" }, { status: 502 });
+      }
+    }
 
     return NextResponse.json(user, { status: 201 });
   } catch (error) {

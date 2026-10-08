@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 
 export const config = {
   matcher: [
-    "/((?!api/auth|_next/static|_next/image|favicon.ico|login|register).*)",
+    "/((?!api/auth|_next/static|_next/image|favicon.ico|login|register|reset-password).*)",
   ],
 };
 
@@ -12,7 +12,7 @@ export default async function proxy(req: NextRequest) {
   const path = req.nextUrl.pathname;
   const method = req.method;
 
-  const publicPaths = ["/login", "/register"];
+  const publicPaths = ["/login", "/register", "/reset-password"];
   const authApiPaths = path.startsWith("/api/auth");
 
   if (publicPaths.includes(path) || authApiPaths) {

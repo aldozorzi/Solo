@@ -13,6 +13,7 @@
     "test": "jest --runInBand",
     "test:xml": "jest tests/integration/xml-matrix.test.ts --runInBand",
     "test:xml:files": "XML_MATRIX_WRITE_FILES=1 jest tests/integration/xml-matrix.test.ts --runInBand",
+    "test:security": "jest tests/integration/security-access.test.ts --runInBand",
     "postinstall": "prisma skills sync || exit 0"
   },
   "dependencies": {
@@ -43,6 +44,7 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-hook-form": "^7.89.0",
+    "resend": "^6.32.1",
     "sonner": "^2.0.8",
     "tailwind-merge": "^3.7.0",
     "xmlbuilder2": "^4.0.3",

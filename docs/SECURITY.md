@@ -23,8 +23,14 @@ come rischio residuo e come operare (backup, rotazioni, incidenti).
   monouso (hash bcrypt, mostrati una sola volta). I segreti sono cifrati AES-256-GCM con chiave
   derivata da `NEXTAUTH_SECRET`. Il login legacy `[...nextauth]` rifiuta gli account con 2FA:
   l'unico percorso è `/api/login` a due step (JSON per React, redirect per form nativo).
-- **Step-up authentication**: eliminare un utente, cambiarne la password o resettarne la 2FA
-  richiede la password corrente del richiedente. Reset 2FA altrui solo da admin.
+- **Step-up authentication**: eliminare un utente richiede la password corrente del
+  richiedente. Password e 2FA altrui non sono mai impostabili dall'admin (vedi recovery).
+- **Recovery via email (unico metodo)**: link monouso con token SHA-256 (solo hash nel DB),
+  scadenza 24h (setup) / 15min (reset), single-use atomico, rate limiting stretto e risposta
+  sempre uniforme (nessun oracolo esistenza-email). Setup account, reset password e reset 2FA
+  passano tutti da qui; a completamento: bump `sessionVersion`, invalidazione token pendenti,
+  email informativa all'utente. L'admin non conosce mai credenziali altrui: crea account
+  bloccati e invia solo inviti.
 - **Rotazione sessioni**: ogni utente ha `sessionVersion`; cambio password e reset 2FA la
   incrementano e invalidano tutti i JWT precedenti. I token emessi prima di questa modifica
   (senza versione) richiedono un nuovo login al primo accesso dopo il deploy.

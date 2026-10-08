@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { prisma } from '@/lib/prisma';
 import { z } from 'zod';
-import { hashPassword, verifyPasswordConstantTime } from '@/lib/auth';
+import { verifyPasswordConstantTime } from '@/lib/auth';
 import { authOptions } from '@/lib/auth';
 import { auditEvent } from '@/lib/audit';
 import { isValidCodiceFiscale, isValidPartitaIVA } from '@/lib/fiscal-code';
@@ -33,9 +33,9 @@ const userUpdateSchema = z.object({
   province: z.string().length(2).optional(),
   country: z.string().optional(),
   taxRegime: z.enum(['FORFETTARIO', 'ORDINARIO']).optional(),
-  password: z.string().min(12, 'Password minima 12 caratteri').optional(),
-  currentPassword: z.string().optional(),
-  totpReset: z.boolean().optional(),
+  senderType: z.enum(['LIBERO_PROFESSIONISTA', 'DITTA_INDIVIDUALE', 'SOCIETA']).optional(),
+  // Niente password/totpReset qui: password e 2FA si cambiano solo via email
+  // (setup/reset dell'utente stesso). La DELETE sotto richiede comunque re-auth.
 });
 
 async function getUserId(): Promise<string> {
@@ -76,6 +76,7 @@ export async function GET(
         province: true,
         country: true,
         taxRegime: true,
+        senderType: true,
         createdAt: true,
         _count: {
           select: { clients: true, invoices: true },
@@ -122,33 +123,7 @@ export async function PUT(
       }
     }
 
-    // Step-up authentication: cambio password e reset 2FA richiedono
-    // la password corrente del richiedente (admin che esegue l'operazione).
-    if (data.password || data.totpReset) {
-      if (!data.currentPassword) {
-        return NextResponse.json({ error: 'Conferma la tua password per procedere' }, { status: 403 });
-      }
-      const requester = await prisma.user.findUnique({ where: { id: userId } });
-      if (!requester || !(await verifyPasswordConstantTime(data.currentPassword, requester.passwordHash))) {
-        return NextResponse.json({ error: 'Password di conferma errata' }, { status: 403 });
-      }
-    }
-
     const updateData: any = { ...data };
-    delete updateData.currentPassword;
-    delete updateData.totpReset;
-    if (data.password) {
-      updateData.passwordHash = await hashPassword(data.password);
-      delete updateData.password;
-      // Invalida tutte le sessioni esistenti dell'utente modificato.
-      updateData.sessionVersion = { increment: 1 };
-    }
-    if (data.totpReset) {
-      updateData.totpSecret = null;
-      updateData.totpEnabled = false;
-      updateData.totpBackupCodes = [];
-      updateData.sessionVersion = { increment: 1 };
-    }
 
     const user = await prisma.user.update({
       where: { id },
@@ -167,6 +142,7 @@ export async function PUT(
         province: true,
         country: true,
         taxRegime: true,
+        senderType: true,
         createdAt: true,
       },
     });
@@ -175,11 +151,7 @@ export async function PUT(
       type: 'user.updated',
       actor: userId,
       target: id,
-      details: {
-        fields: Object.keys(data).filter((k) => k !== 'currentPassword'),
-        passwordChanged: !!data.password,
-        totpReset: !!data.totpReset,
-      },
+      details: { fields: Object.keys(data) },
     });
 
     return NextResponse.json(user);

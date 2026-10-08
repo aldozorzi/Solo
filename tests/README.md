@@ -64,3 +64,30 @@ Per ogni combinazione la suite controlla:
 | Ordinario, cliente Italia, altri soggetti | IVA `22%`, senza natura | no | no |
 | Ordinario, cliente UE | `N2.1` | no | no |
 | Ordinario, cliente Extra-UE | `N2.2` | `2,00 €` se imponibile `> 77,47 €` | no |
+
+## Gate sicurezza pre-deploy (`test:security`)
+
+`npm run test:security` esegue `tests/integration/security-access.test.ts`: 17 test
+black-box via HTTP contro un'app in esecuzione (vertical/horizontal escalation,
+uniformità errori login, rate limit, MFA end-to-end, rotazione sessioni, re-auth,
+audit log). **Mai contro dati reali**: la suite abortisce se il DB contiene utenti.
+
+Rituale completo (database e app temporanei, poi rimozione totale):
+
+```bash
+docker run -d --name solo-verify-sec -e POSTGRES_USER=solo \
+  -e POSTGRES_PASSWORD=solo -e POSTGRES_DB=solo -p 5433:5432 postgres:16-alpine
+export SCRATCH_URL="postgresql://solo:solo@localhost:5433/solo?schema=public"
+DATABASE_URL="$SCRATCH_URL" npx prisma db push --skip-generate
+npm run build
+DATABASE_URL="$SCRATCH_URL" RESEND_API_KEY= npx next start -p 3100 &
+APP_BASE_URL=http://localhost:3100 TEST_DATABASE_URL="$SCRATCH_URL" npm run test:security
+# teardown: kill server, docker rm -f solo-verify-sec, rimozione volume anonimo creato
+```
+
+Note:
+- `RESEND_API_KEY=` vuoto di proposito: nessun invio reale durante i test; i flussi email
+  falliscono in modo controllato (502 + rollback, verificato dalla suite). L'invio reale
+  si prova a mano.
+- La suite abortisce se il DB contiene già utenti: impossibile lanciarla per sbaglio
+  contro dati reali (a patto di usare davvero un DB scratch come sopra).

@@ -38,6 +38,9 @@ export async function GET() {
     });
     return NextResponse.json(clients);
   } catch (error) {
+    if (error instanceof Error && error.message === 'Non autenticato') {
+      return NextResponse.json({ error: error.message }, { status: 401 });
+    }
     console.error('Error fetching clients:', error);
     return NextResponse.json({ error: 'Errore nel recupero clienti' }, { status: 500 });
   }
