@@ -18,11 +18,15 @@ come rischio residuo e come operare (backup, rotazioni, incidenti).
 - Messaggi di errore uniformi (mai distinzione utente/password) e **tempi uniformi**:
   confronto bcrypt sempre eseguito anche per utenti inesistenti (dummy hash cost 12).
 - **Rate limiting** in-memory (per istanza — vedi limiti sotto): login 10 tentativi/10min per IP,
-  callback NextAuth 20/10min, registrazione 5/ora. Superato il limite: `429` + `Retry-After`.
+  callback NextAuth 20/10min, recupero password 5/ora per IP (+ quota anti mail-bombing
+  per destinatario), completamento reset 10/10min per IP. Superato il limite: `429` + `Retry-After`.
+  Nota: `POST /api/users` (creazione utenti, solo admin o bootstrap) non ha rate limiting
+  dedicato: è protetto da autenticazione/ruolo, non esposto agli anonimi dopo il bootstrap.
 - **2FA TOTP** opzionale per account (RFC 6238, SHA-1, 30s, 6 cifre, finestra ±1) + 8 backup code
   monouso (hash bcrypt, mostrati una sola volta). I segreti sono cifrati AES-256-GCM con chiave
   derivata da `NEXTAUTH_SECRET`. Il login legacy `[...nextauth]` rifiuta gli account con 2FA:
-  l'unico percorso è `/api/login` a due step (JSON per React, redirect per form nativo).
+  l'unico percorso è `/api/login` a due step, solo JSON (nessun flusso form nativo:
+  niente redirect, quindi niente open redirect possibile).
 - **Step-up authentication**: eliminare un utente richiede la password corrente del
   richiedente. Password e 2FA altrui non sono mai impostabili dall'admin (vedi recovery).
 - **Recovery via email (unico metodo)**: link monouso con token SHA-256 (solo hash nel DB),
@@ -36,6 +40,51 @@ come rischio residuo e come operare (backup, rotazioni, incidenti).
   (senza versione) richiedono un nuovo login al primo accesso dopo il deploy.
 - Il ruolo è **write-once**: primo utente = ADMIN, gli altri sempre USER, nessuna API/UI
   può crearlo o modificarlo. Impossibile restare senza admin via app.
+
+## 2b. Cifratura application-level (doppio involucro)
+
+- Ogni utente ha una **DEK** (AES-256) che cifra i campi sensibili di clienti,
+  incassi, fatture e righe (`*Enc`/`*Iv`, AES-256-GCM). Nel DB restano in chiaro
+  solo chiavi, enum, stati e timestamp tecnici.
+- La DEK è avvolta due volte (tabella `UserKey`):
+  - **W_pwd** con chiave derivata dalla password (**Argon2id** + `argon2Salt`),
+    presente per **tutti** gli utenti;
+  - **W_sys** con la `MASTER_KEY` di sistema per gli utenti **standard**, oppure
+    con una chiave derivata dal **secret di recupero** dell'utente per gli
+    account **Zero-Knowledge** (`zeroKnowledgeMode = true` + `zkSalt`).
+- **Sessione**: al login la DEK viene sbloccata via W_pwd e riposta in un cookie
+  HTTP-only separato (`zk-dek`, `SameSite=Lax`, stessa durata della sessione).
+  Le API leggono da lì la DEK: la password non viene mai conservata. Il cookie
+  viene cancellato al logout (`DELETE /api/login` chiamato prima di `signOut`).
+  Con 2FA attiva la DEK viaggia nel challenge JWT (firmato/cifrato, 5 min) e
+  viene consegnata solo a secondo fattore completato.
+- **Recovery standard (email)**: la cerimonia di reset sblocca W_sys con la
+  `MASTER_KEY` e ri-avvolge con la nuova password (nuovo W_pwd + nuovo salt
+  Argon2). Non richiede la vecchia password.
+- **Zero-Knowledge**: `MASTER_KEY` **non** può sbloccare W_sys; il reset password
+  vero e proprio (`zk-password-reset`) richiede il secret di recupero. Se il
+  secret è perso, i dati sono irrecuperabili.
+  - **Attivazione e rotazione a due fasi**: `prepare` genera e mostra la nuova
+    chiave senza toccare il DB; `confirm` (click esplicito dell'utente) verifica
+    un `pendingToken` firmato/cifrato (`NEXTAUTH_SECRET`, TTL 10 min, vincolato a
+    utente e operazione) e solo allora committa. La modalità resta **disattivata**
+    finché l'utente non conferma di aver salvato la chiave; la vecchia chiave di
+    rotazione resta valida fino al confirm. Attivazione/rotazione non cambiano la
+    DEK (i dati restano decifrabili).
+  - **Autorizzazione rotazione/disattivazione**: step-up con la **password
+    corrente** (chi la conosce ha già accesso ai dati via W_pwd). Così anche chi
+    ha perso la chiave può generarne una nuova restando loggato. La vecchia
+    chiave è richiesta solo nel recupero password (`zk-password-reset`).
+  - Ogni endpoint ZK agisce **solo** sull'utente di sessione: nessun input accetta
+    un `userId`/email di terzi (nessuna rotazione cross-utente possibile).
+- Righe migrate da plaintext: UserKey "pending" (solo W_sys); W_pwd si stabilisce
+  al primo reset password via email.
+- `MASTER_KEY` (base64, 32 byte) è obbligatoria in ogni ambiente (`.env`,
+  Vercel, test via `tests/support/load-env.ts`). Smarrirla = dati irrecuperabili
+  (per gli utenti non-ZK); ruotarla richiede il re-wrap di tutte le UserKey.
+- Limiti noti: niente ricerca/ordinamento SQL sui campi cifrati (filtri e
+  aggregati spostati in JS dopo decifratura); la DEK vive nel cookie di sessione
+  per la durata della sessione.
 
 ## 3. Autorizzazione
 
@@ -97,8 +146,13 @@ come rischio residuo e come operare (backup, rotazioni, incidenti).
 - Login errato ripetuto: messaggi/tempi uniformi; dopo 10 tentativi/10min arriva `429`.
 - Impostazioni → attiva 2FA: segreto + QR-link, conferma con codice, backup code mostrati una volta.
 - Logout/login con codice TOTP e con backup code (il backup usato non funziona più la seconda volta).
-- Cambio password da Gestione Utenti (richiede la tua password): le sessioni precedenti smettono di funzionare.
-- Reset 2FA da Gestione Utenti (richiede la tua password).
+- Reset password via email: dal login ("Password dimenticata?") o da Gestione Utenti
+  ("Invia email reset password"); completa dal link entro 15 minuti e verifica che le
+  sessioni precedenti smettano di funzionare (`sessionVersion`) e che arrivi l'email di notifica.
+- Reset 2FA via email: da Gestione Utenti ("Invia email reset 2FA"), completa dal link;
+  la 2FA risulta disattivata e va riattivata dalle Impostazioni.
+- Eliminazione utente da Gestione Utenti (step-up: richiede la password corrente
+  dell'admin che esegue l'azione).
 - Restore: solo su database scratch, mai su quello reale senza backup appena fatto.
 
 ## 9. In caso di incidente

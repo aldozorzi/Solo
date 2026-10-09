@@ -1,5 +1,11 @@
 import { create } from 'xmlbuilder2';
-import { Client, Invoice, InvoiceItem, Payment, User, TaxRegime } from '@prisma/client';
+import { User, TaxRegime } from '@prisma/client';
+import type {
+  DecryptedClient,
+  DecryptedInvoice,
+  DecryptedInvoiceItem,
+  DecryptedPayment,
+} from './data-encryption';
 import { InvoiceTotals } from './tax';
 
 const FATTURE_NS = 'http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2';
@@ -29,10 +35,10 @@ export interface SdiConfig {
 }
 
 export interface InvoiceDataForXml {
-  invoice: Invoice & {
-    client: Client;
-    items: InvoiceItem[];
-    payments: Payment[];
+  invoice: DecryptedInvoice & {
+    client: DecryptedClient;
+    items: DecryptedInvoiceItem[];
+    payments: DecryptedPayment[];
   };
   totals: InvoiceTotals;
   config: SdiConfig;
@@ -60,7 +66,7 @@ function getRegimeFiscaleCode(taxRegime: TaxRegime): string {
  * Progressivo univoco del file (max 5 caratteri alfanumerici, All. A §1.2.2):
  * 2 cifre anno + 3 cifre numero (supporta fino a 999 fatture/anno).
  */
-export function invoiceProgressivo(invoice: Invoice): string {
+export function invoiceProgressivo(invoice: { number: number; year: number }): string {
   const year2 = String(invoice.year).slice(-2);
   if (invoice.number <= 999) {
     return `${year2}${String(invoice.number).padStart(3, '0')}`;
@@ -68,7 +74,21 @@ export function invoiceProgressivo(invoice: Invoice): string {
   return String(invoice.number).slice(-5);
 }
 
-export function userToSdiConfig(user: User): SdiConfig {
+export type SdiUserInfo = Pick<
+  User,
+  | 'vatNumber'
+  | 'taxCode'
+  | 'businessName'
+  | 'taxRegime'
+  | 'address'
+  | 'zipCode'
+  | 'city'
+  | 'province'
+  | 'country'
+  | 'email'
+>;
+
+export function userToSdiConfig(user: SdiUserInfo): SdiConfig {
   return {
     sender: {
       idPaese: 'IT',
@@ -340,7 +360,7 @@ export function generateFatturaPAXml(data: InvoiceDataForXml): string {
 /**
  * Nome file SdI-compliant (All. A §1.2.2): IT + identificativo + _ + progressivo(≤5).
  */
-export function generateFileName(invoice: Invoice, config: SdiConfig): string {
+export function generateFileName(invoice: { number: number; year: number }, config: SdiConfig): string {
   const senderVat = config.sender.idCodice || '00000000000';
   return `IT${senderVat}_${invoiceProgressivo(invoice)}.xml`;
 }

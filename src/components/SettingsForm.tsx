@@ -13,6 +13,7 @@ import { Loader2, CheckCircle2 } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { isValidCodiceFiscale, isValidPartitaIVA } from '@/lib/fiscal-code';
 import { MfaSettings } from './MfaSettings';
+import { ZeroKnowledgeSettings } from './ZeroKnowledgeSettings';
 
 const settingsSchema = z.object({
   businessName: z.string().min(1, 'Denominazione obbligatoria'),
@@ -261,6 +262,7 @@ export function SettingsForm({ onSettingsChange }: SettingsFormProps) {
       </CardContent>
     </Card>
     <MfaSettings />
+      <ZeroKnowledgeSettings />
     </>
   );
 }

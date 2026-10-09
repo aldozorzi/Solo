@@ -47,6 +47,24 @@ export async function POST(request: NextRequest) {
     const user = await prisma.user.findUnique({ where: { id: claimed.userId } });
     if (!user) return fail();
 
+    // Cerimonia di reset: la vecchia password è sconosciuta, quindi la DEK viene
+    // sbloccata via W_sys (master key) e ri-avvolta con la nuova password (nuovo W_pwd).
+    const existingKey = await prisma.userKey.findUnique({ where: { userId: user.id } });
+    if (existingKey) {
+      const { rewrapUserKeyOnPasswordReset } = await import('@/lib/crypto');
+      const { wPwd, argon2Salt } = await rewrapUserKeyOnPasswordReset(
+        {
+          wSys: existingKey.wSys,
+          zeroKnowledgeMode: existingKey.zeroKnowledgeMode,
+        },
+        parsed.data.newPassword
+      );
+      await prisma.userKey.update({
+        where: { userId: user.id },
+        data: { wPwd, argon2Salt: argon2Salt.toString('base64') },
+      });
+    }
+
     await prisma.user.update({
       where: { id: user.id },
       data: {

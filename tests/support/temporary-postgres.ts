@@ -85,7 +85,7 @@ export async function createTemporaryPostgresDatabase(options: {
   const schemaProcess = spawnSync(
     'npx',
     ['prisma', 'db', 'push', '--skip-generate', '--schema', path.join(cwd, 'prisma', 'schema.prisma')],
-    { cwd, env: { ...process.env, DATABASE_URL: url }, encoding: 'utf8' }
+    { cwd, env: { ...process.env, DATABASE_URL: url, DIRECT_URL: url }, encoding: 'utf8' }
   );
   if (schemaProcess.status !== 0) {
     await admin.$executeRawUnsafe(`DROP DATABASE IF EXISTS ${quoteIdentifier(name)}`).catch(() => undefined);

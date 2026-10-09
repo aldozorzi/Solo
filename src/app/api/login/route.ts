@@ -7,12 +7,15 @@ import { verifyTotpCode } from "@/lib/totp";
 import { checkRateLimit, clientIpFromHeaders } from "@/lib/rate-limit";
 import { auditEvent, auditWebhookAlert, noteAuthFailure } from "@/lib/audit";
 import { openSecret as openTotpSecret } from "@/lib/secret-box";
+import { unwrapWithPassword, unwrapWithMasterKey, deriveKeyFromPassword, wrapKey } from "@/lib/crypto";
+import { randomBytes } from "crypto";
 import bcrypt from "bcryptjs";
 
 const SESSION_MAX_AGE = 30 * 24 * 60 * 60; // 30 giorni, come in authOptions
 const MFA_CHALLENGE_MAX_AGE = 5 * 60; // 5 minuti
 const LOGIN_LIMIT = 10;
 const LOGIN_WINDOW_MS = 10 * 60 * 1000;
+const DEK_COOKIE = "zk-dek";
 
 // Stessa logica di NextAuth (getToken): cookie __Secure- solo su HTTPS,
 // altrimenti nome semplice. Così resta coerente in sviluppo (HTTP) e produzione (HTTPS).
@@ -30,6 +33,58 @@ function setSessionCookie(res: NextResponse, encoded: string): void {
     secure: useSecureCookies,
     maxAge: SESSION_MAX_AGE,
   });
+}
+
+// La DEK utente (sbloccata con W_pwd al login) vive in un cookie HTTP-only
+// separato: consente la decifratura applicativa durante la sessione.
+function setDekCookie(res: NextResponse, dek: Buffer): void {
+  res.cookies.set(DEK_COOKIE, dek.toString("base64"), {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    secure: useSecureCookies,
+    maxAge: SESSION_MAX_AGE,
+  });
+}
+
+// Cancella la DEK di sessione (chiamato al logout prima di signOut).
+export async function DELETE(): Promise<NextResponse> {
+  const res = NextResponse.json({ ok: true });
+  res.cookies.set(DEK_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    secure: useSecureCookies,
+    maxAge: 0,
+  });
+  return res;
+}
+
+async function deriveUserDek(userId: string, password: string): Promise<Buffer | null> {
+  const userKey = await prisma.userKey.findUnique({ where: { userId } });
+  if (!userKey) return null;
+
+  try {
+    return await unwrapWithPassword(userKey, password);
+  } catch {
+    // W_pwd assente o non allineato. Per gli utenti standard la DEK canonica è
+    // quella avvolta in W_sys (MASTER_KEY): la usiamo e riallineiamo W_pwd alla
+    // password corrente (self-heal dopo migrazioni/refactor).
+    if (userKey.zeroKnowledgeMode) return null;
+    try {
+      const dek = await unwrapWithMasterKey(userKey);
+      const argon2Salt = randomBytes(16);
+      const pwdKey = await deriveKeyFromPassword(password, argon2Salt);
+      const wPwd = wrapKey(dek, pwdKey);
+      await prisma.userKey.update({
+        where: { userId },
+        data: { wPwd, argon2Salt: argon2Salt.toString("base64") },
+      });
+      return dek;
+    } catch {
+      return null;
+    }
+  }
 }
 
 async function mintSessionToken(user: User): Promise<string> {
@@ -95,11 +150,12 @@ export async function POST(request: NextRequest) {
     // ---- Step 2: verifica secondo fattore ----
     if (typeof body.challenge === "string" && body.challenge) {
       const email = typeof body.email === "string" ? body.email.trim() : "";
-      let challenge: { sub?: string; stage?: string };
+      let challenge: { sub?: string; stage?: string; dek?: string };
       try {
         challenge = (await decode({ token: body.challenge, secret })) as {
           sub?: string;
           stage?: string;
+          dek?: string;
         };
       } catch {
         auditKo(email, ip, "bad_challenge");
@@ -138,6 +194,13 @@ export async function POST(request: NextRequest) {
       auditEvent({ type: "auth.login_ok", actor: user.email, ip, details: { mfa: true } });
       const res = NextResponse.json({ ok: true });
       setSessionCookie(res, encoded);
+      if (challenge.dek) {
+        try {
+          setDekCookie(res, Buffer.from(challenge.dek, "base64"));
+        } catch {
+          console.error("DEK non valida nel challenge MFA");
+        }
+      }
       return res;
     }
 
@@ -155,9 +218,17 @@ export async function POST(request: NextRequest) {
       return fail("CredentialsSignin");
     }
 
+    // Sblocca la DEK con W_pwd (tutti gli utenti). Sarà consegnata solo a MFA
+    // completata, oppure subito se la 2FA non è attiva.
+    const dek = await deriveUserDek(user.id, password);
+
     if (user.totpEnabled) {
       const challenge = await encode({
-        token: { sub: user.id, stage: "mfa" } as unknown as JWT,
+        token: {
+          sub: user.id,
+          stage: "mfa",
+          dek: dek ? dek.toString("base64") : undefined,
+        } as unknown as JWT,
         secret,
         maxAge: MFA_CHALLENGE_MAX_AGE,
       });
@@ -169,6 +240,7 @@ export async function POST(request: NextRequest) {
     auditEvent({ type: "auth.login_ok", actor: user.email, ip });
     const res = NextResponse.json({ ok: true });
     setSessionCookie(res, encoded);
+    if (dek) setDekCookie(res, dek);
     return res;
   } catch (error) {
     console.error("Error in /api/login:", error);

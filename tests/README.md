@@ -67,10 +67,11 @@ Per ogni combinazione la suite controlla:
 
 ## Gate sicurezza pre-deploy (`test:security`)
 
-`npm run test:security` esegue `tests/integration/security-access.test.ts`: 17 test
+`npm run test:security` esegue `tests/integration/security-access.test.ts`: 27 test
 black-box via HTTP contro un'app in esecuzione (vertical/horizontal escalation,
 uniformità errori login, rate limit, MFA end-to-end, rotazione sessioni, re-auth,
-audit log). **Mai contro dati reali**: la suite abortisce se il DB contiene utenti.
+audit log, autorizzazione per-utente e flussi Zero-Knowledge a due fasi).
+**Mai contro dati reali**: la suite abortisce se il DB contiene utenti.
 
 Rituale completo (database e app temporanei, poi rimozione totale):
 
@@ -78,9 +79,10 @@ Rituale completo (database e app temporanei, poi rimozione totale):
 docker run -d --name solo-verify-sec -e POSTGRES_USER=solo \
   -e POSTGRES_PASSWORD=solo -e POSTGRES_DB=solo -p 5433:5432 postgres:16-alpine
 export SCRATCH_URL="postgresql://solo:solo@localhost:5433/solo?schema=public"
-DATABASE_URL="$SCRATCH_URL" npx prisma db push --skip-generate
+# DIRECT_URL va impostata anche qui: lo schema Prisma la usa per le migrazioni/db push.
+DATABASE_URL="$SCRATCH_URL" DIRECT_URL="$SCRATCH_URL" npx prisma db push --skip-generate
 npm run build
-DATABASE_URL="$SCRATCH_URL" RESEND_API_KEY= npx next start -p 3100 &
+DATABASE_URL="$SCRATCH_URL" DIRECT_URL="$SCRATCH_URL" RESEND_API_KEY= npx next start -p 3100 &
 APP_BASE_URL=http://localhost:3100 TEST_DATABASE_URL="$SCRATCH_URL" npm run test:security
 # teardown: kill server, docker rm -f solo-verify-sec, rimozione volume anonimo creato
 ```

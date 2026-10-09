@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { createRecoveryToken, type RecoveryTokenType } from "@/lib/account-recovery";
 import { sendMail } from "@/lib/mail";
-import { mfaResetMail, passwordResetMail, setupAccountMail } from "@/lib/mail-templates";
+import { mfaResetMail, passwordResetMail, setupAccountMail, zkPasswordResetMail } from "@/lib/mail-templates";
 import { checkEmailQuota, checkRateLimit, clientIpFromHeaders } from "@/lib/rate-limit";
 import { auditEvent } from "@/lib/audit";
 
@@ -45,6 +45,12 @@ export async function POST(request: NextRequest) {
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return respondOk();
 
+    // Il reset 2FA ha senso solo con la 2FA attiva. Gli utenti Zero-Knowledge
+    // non hanno recovery via email (nemmeno per la 2FA): risposta uniforme.
+    if (data.kind === "mfa" && (!user.totpEnabled || user.zeroKnowledgeEnabled)) {
+      return respondOk();
+    }
+
     // Quota anti mail-bombing: per destinatario + tetto spray per IP.
     const quota = checkEmailQuota(`mail:${email.toLowerCase()}`);
     const spray = checkRateLimit(`mailip:${ip}`, 10, 10 * 60 * 1000);
@@ -52,12 +58,18 @@ export async function POST(request: NextRequest) {
 
     const tokenType = KIND_TO_TOKEN[data.kind];
     const token = await createRecoveryToken(user.id, tokenType);
-    const template =
-      data.kind === "mfa"
-        ? mfaResetMail(user.name, token)
-        : data.kind === "setup"
-          ? setupAccountMail(user.name, token)
-          : passwordResetMail(user.name, token);
+    
+    // Per utenti ZK con reset password: usiamo template dedicato
+    let template;
+    if (data.kind === "password" && user.zeroKnowledgeEnabled) {
+      template = zkPasswordResetMail(user.name, token);
+    } else if (data.kind === "mfa") {
+      template = mfaResetMail(user.name, token);
+    } else if (data.kind === "setup") {
+      template = setupAccountMail(user.name, token);
+    } else {
+      template = passwordResetMail(user.name, token);
+    }
 
     // Fire-and-forget: la risposta resta uniforme e veloce in entrambi i rami.
     void sendMail({ to: user.email, ...template }).then((result) => {
@@ -71,7 +83,7 @@ export async function POST(request: NextRequest) {
       }
     });
 
-    return respondOk();
+    return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("Error in /api/auth/forgot-password:", error);
     return respondOk();

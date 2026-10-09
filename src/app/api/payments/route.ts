@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { prisma } from '@/lib/prisma';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
+import { getUserDek, decryptPayment, decryptClient, decryptInvoice, encryptPaymentInput } from '@/lib/data-encryption';
 
 const dateInputSchema = z.string().min(1, 'Data obbligatoria').refine(
   (v) => !Number.isNaN(Date.parse(v)),
@@ -41,6 +42,7 @@ async function verifyClientOwnership(userId: string, clientId: string) {
 export async function GET(request: NextRequest) {
   try {
     const userId = await getUserId();
+    const dek = await getUserDek(userId);
     const { searchParams } = new URL(request.url);
     const clientId = searchParams.get('clientId');
     const withoutInvoice = searchParams.get('withoutInvoice') === 'true';
@@ -58,9 +60,16 @@ export async function GET(request: NextRequest) {
         client: true,
         invoice: true,
       },
-      orderBy: { paidAt: 'desc' },
+      // paidAt è cifrato: ordinamento su createdAt (plaintext).
+      orderBy: { createdAt: 'desc' },
     });
-    return NextResponse.json(payments);
+    const decrypted = await Promise.all(payments.map(async (p) => {
+      const payment = await decryptPayment(p, dek);
+      payment.client = await decryptClient(p.client, dek);
+      payment.invoice = p.invoice ? await decryptInvoice(p.invoice, dek) : null;
+      return payment;
+    }));
+    return NextResponse.json(decrypted);
   } catch (error) {
     if (error instanceof Error && (error.message === 'Non autenticato' || error.message.includes('accesso negato'))) {
       return NextResponse.json({ error: error.message }, { status: error.message === 'Non autenticato' ? 401 : 403 });
@@ -73,6 +82,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const userId = await getUserId();
+    const dek = await getUserDek(userId);
     const body = await request.json();
     const data = paymentSchema.parse(body);
 
@@ -89,18 +99,25 @@ export async function POST(request: NextRequest) {
 
     const originalCurrency = (data.originalCurrency || '').trim().toUpperCase() || undefined;
 
+    const encrypted = encryptPaymentInput({
+      ...data,
+      paidAt: new Date(data.paidAt),
+      originalCurrency: data.originalAmount !== undefined && originalCurrency ? originalCurrency : undefined,
+    }, dek);
+
     const payment = await prisma.payment.create({
       data: {
-        ...data,
-        originalCurrency:
-          data.originalAmount !== undefined && originalCurrency ? originalCurrency : undefined,
+        ...encrypted,
         userId,
-        paidAt: new Date(data.paidAt),
+        clientId: data.clientId,
+        invoiceId: data.invoiceId,
       },
       include: { client: true },
     });
 
-    return NextResponse.json(payment, { status: 201 });
+    const decrypted = await decryptPayment(payment, dek);
+    decrypted.client = await decryptClient(payment.client, dek);
+    return NextResponse.json(decrypted, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: error.issues }, { status: 400 });

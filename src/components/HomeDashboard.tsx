@@ -13,7 +13,7 @@ import { MainNav } from './MainNav';
 import { PaymentForm } from './PaymentForm';
 import { ThemeSelector } from './ThemeSelector';
 import { formatCurrency } from '@/lib/tax';
-import type { Client, PaymentWithRelations, UserRole, UserSession } from '@/types';
+import type { DecryptedClient, PaymentWithRelations, UserRole, UserSession } from '@/types';
 import { TAX_REGIME_LABELS, USER_ROLE_LABELS } from '@/types';
 
 export interface HomePendingPayment {
@@ -22,7 +22,7 @@ export interface HomePendingPayment {
   description: string;
   amount: number;
   paidAt: string;
-  client: Client;
+  client: DecryptedClient;
 }
 
 export interface HomeMonthlyRevenue {
@@ -52,7 +52,7 @@ export interface HomeSummary {
 interface HomeDashboardProps {
   user: UserSession;
   summary: HomeSummary;
-  clients: Client[];
+  clients: DecryptedClient[];
   pendingPayments: HomePendingPayment[];
 }
 
@@ -153,6 +153,7 @@ export default function HomeDashboard({
   const refresh = () => router.refresh();
 
   const handleSignOut = async () => {
+    await fetch('/api/login', { method: 'DELETE' }).catch(() => undefined);
     await signOut({ callbackUrl: '/login' });
   };
 

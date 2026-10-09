@@ -1,18 +1,20 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 
-export default function ResetPasswordForm() {
+interface ResetPasswordFormProps {
+  token: string;
+  isMfaFlow?: boolean;
+}
+
+export default function ResetPasswordForm({ token, isMfaFlow = false }: ResetPasswordFormProps) {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const token = searchParams.get('token') || '';
-  const isMfaFlow = searchParams.get('flow') === 'mfa';
 
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -93,7 +95,8 @@ export default function ResetPasswordForm() {
   };
 
   return (
-    <Card className="w-full max-w-md panel-translucent">
+    <div className="min-h-screen bg-gradient-app flex items-center justify-center p-4">
+      <Card className="w-full max-w-md panel-translucent">
       <CardHeader className="text-center">
         <CardTitle className="text-2xl font-bold">
           {isMfaFlow ? 'Disattiva verifica in due passaggi' : 'Imposta la tua password'}
@@ -179,5 +182,6 @@ export default function ResetPasswordForm() {
         )}
       </CardContent>
     </Card>
+    </div>
   );
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,6 +18,7 @@ const QUERY_ERROR_MESSAGES: Record<string, string> = {
   AccessDenied: "Accesso negato",
   Configuration: "Errore di configurazione del login",
   RateLimited: "Troppe richieste, riprova tra qualche minuto",
+  SessionExpired: "Sessione scaduta, effettua di nuovo il login",
 };
 
 const JSON_ERROR_MESSAGES: Record<string, string> = {
@@ -41,7 +42,6 @@ async function postLoginJson(body: Record<string, string>): Promise<{
 }
 
 export default function LoginForm({ showRegisterLink }: LoginFormProps) {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get('callbackUrl') || '/';
   const errorParam = searchParams.get('error');
@@ -79,8 +79,9 @@ export default function LoginForm({ showRegisterLink }: LoginFormProps) {
         setTotpCode('');
         setStep('mfa');
       } else if (result.ok) {
-        router.push(callbackUrl);
-        router.refresh();
+        // Hard navigation: forza reinizializzazione SessionProvider col cookie appena impostato.
+        // Equivalente a F5 ma automatico. Elimina ogni race tra update() e navigazione.
+        window.location.href = callbackUrl;
       } else {
         setFormError(JSON_ERROR_MESSAGES[result.error || ''] ?? 'Errore durante il login');
       }
@@ -106,8 +107,7 @@ export default function LoginForm({ showRegisterLink }: LoginFormProps) {
     try {
       const result = await postLoginJson({ challenge, totpCode: submitCode, callbackUrl });
       if (result.ok) {
-        router.push(callbackUrl);
-        router.refresh();
+        window.location.href = callbackUrl;
       } else {
         setFormError('Codice non valido, riprova');
       }

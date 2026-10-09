@@ -46,6 +46,20 @@ export function mfaResetMail(name: string, token: string): MailTemplate {
   );
 }
 
+export function zkPasswordResetMail(name: string, token: string): MailTemplate {
+  const link = `${appUrl()}/reset-password?token=${encodeURIComponent(token)}`;
+  return layout(
+    "Reimposta la tua password Solo",
+    `<p>Ciao ${escapeHtml(name)},</p>
+    <p>Hai richiesto il recupero password. Poiché il tuo account è in <strong>Modalità Zero-Knowledge</strong>, il recupero richiede la tua <strong>chiave di recupero</strong>.</p>
+    <p>Clicca il link sotto (valido <strong>15 minuti</strong>) e inserisci la tua chiave di recupero:</p>
+    <p><a href="${link}">Reimposta password (Zero-Knowledge)</a></p>
+    <p><strong>Importante:</strong> Senza la chiave di recupero non è possibile reimpostare la password. Se l'hai persa, i dati non sono recuperabili.</p>
+    <p>Se non hai richiesto tu il reset, ignora pure questa email.</p>`,
+    `Ciao ${name},\n\nHai richiesto il recupero password. Il tuo account è in Modalità Zero-Knowledge: il recupero richiede la tua chiave di recupero.\n\nClicca il link (valido 15 minuti) e inserisci la tua chiave di recupero:\n${link}\n\nImportante: Senza la chiave di recupero non è possibile reimpostare la password. Se l'hai persa, i dati non sono recuperabili.\n\nSe non hai richiesto tu il reset, ignora pure questa email.`
+  );
+}
+
 export function securityNoticeMail(name: string, what: string): MailTemplate {
   return layout(
     "Avviso di sicurezza Solo",

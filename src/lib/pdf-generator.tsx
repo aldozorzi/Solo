@@ -1,6 +1,12 @@
 import React from 'react';
-import { Document, Page, Text, View, StyleSheet, Font } from '@react-pdf/renderer';
-import { Invoice, Client, InvoiceItem, Payment, User, TaxRegime } from '@prisma/client';
+import { Document, Page, Text, View, StyleSheet, Font, type DocumentProps } from '@react-pdf/renderer';
+import { User, TaxRegime, ClientType } from '@prisma/client';
+import type {
+  DecryptedClient,
+  DecryptedInvoice,
+  DecryptedInvoiceItem,
+  DecryptedPayment,
+} from './data-encryption';
 import { InvoiceTotals, formatCurrency, formatDate, formatDualAmount } from './tax';
 
 Font.register({
@@ -30,7 +36,20 @@ interface SenderInfo {
   phone?: string;
 }
 
-export function userToSenderInfo(user: User): SenderInfo {
+export type SenderUserInfo = Pick<
+  User,
+  | 'businessName'
+  | 'vatNumber'
+  | 'taxCode'
+  | 'address'
+  | 'city'
+  | 'zipCode'
+  | 'province'
+  | 'country'
+  | 'taxRegime'
+>;
+
+export function userToSenderInfo(user: SenderUserInfo): SenderInfo {
   return {
     name: user.businessName,
     vatNumber: user.vatNumber,
@@ -47,10 +66,10 @@ export function userToSenderInfo(user: User): SenderInfo {
 }
 
 interface InvoicePdfProps {
-  invoice: Invoice & {
-    client: Client;
-    items: InvoiceItem[];
-    payments: Payment[];
+  invoice: DecryptedInvoice & {
+    client: DecryptedClient;
+    items: DecryptedInvoiceItem[];
+    payments: DecryptedPayment[];
   };
   totals: InvoiceTotals;
   sender: SenderInfo;
@@ -76,7 +95,7 @@ function formatSenderAddress(sender: SenderInfo): string {
   return parts.join(', ') || 'N/A';
 }
 
-function formatClientAddress(client: Client): string {
+function formatClientAddress(client: DecryptedClient): string {
   const parts: string[] = [];
   if (client.address) parts.push(client.address);
   const locality = [client.zipCode, client.city].filter(Boolean).join(' ');
@@ -86,14 +105,14 @@ function formatClientAddress(client: Client): string {
 }
 
 function formatPaymentLine(
-  payment: Payment,
-  clientType: Client['type']
+  payment: DecryptedPayment,
+  clientType: ClientType
 ): string {
   const date = formatDate(payment.paidAt);
   const amounts = formatDualAmount(
     payment.amount,
-    (payment as any).originalAmount,
-    (payment as any).originalCurrency,
+    payment.originalAmount,
+    payment.originalCurrency,
     clientType
   );
   return `- Accredito del ${date}: ${amounts}`;
@@ -200,7 +219,9 @@ export function InvoicePdfDocument(props: InvoicePdfProps) {
 export async function generateInvoicePdfBuffer(props: InvoicePdfProps): Promise<Buffer> {
   const { renderToBuffer } = await import('@react-pdf/renderer');
 
-  const element = React.createElement(InvoicePdfDocument, props) as React.ReactElement<any>;
+  // renderToBuffer vuole un <Document>: il cast è solo di forma, il componente
+  // radice di InvoicePdfDocument è Document.
+  const element = React.createElement(InvoicePdfDocument, props) as unknown as React.ReactElement<DocumentProps>;
   const buffer = await renderToBuffer(element);
   return Buffer.from(buffer);
 }
