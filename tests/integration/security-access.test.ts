@@ -114,7 +114,11 @@ async function loginJson(email: string, password: string, ip?: string): Promise<
 const PASSWORD = "Password123456";
 let PASSWORD_HASH = "";
 
-async function mkUser(email: string, role: "ADMIN" | "USER" = "USER") {
+async function mkUser(
+  email: string,
+  role: "ADMIN" | "USER" = "USER",
+  taxRegime: "FORFETTARIO" | "ORDINARIO" | "PRESTAZIONE_OCCASIONALE" = "FORFETTARIO"
+) {
   // Stessa password di login (PASSWORD): W_pwd valido, sbloccabile con password.
   const { generateUserKey } = await import("@/lib/crypto");
   const { wPwd, wSys, argon2Salt } = await generateUserKey(PASSWORD);
@@ -138,7 +142,7 @@ async function mkUser(email: string, role: "ADMIN" | "USER" = "USER") {
       city: "x",
       zipCode: "00000",
       country: "IT",
-      taxRegime: "FORFETTARIO" as never,
+      taxRegime: taxRegime as never,
       senderType: "LIBERO_PROFESSIONISTA" as never,
     },
   });
@@ -869,6 +873,56 @@ describe("security: anti escalation", () => {
       // La sessione dell'admin ora è invalida.
       const me = await api("GET", "/api/clients", { jar: adminJar });
       expect(me.status).toBe(401);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Prestazione occasionale: niente XML SdI, solo ricevuta PDF.
+  // ---------------------------------------------------------------------------
+  describe("prestazione occasionale: export", () => {
+    let jarO: Jar;
+    let invO: { id: string };
+
+    beforeAll(async () => {
+      const userO = await mkUser("o@test.local", "USER", "PRESTAZIONE_OCCASIONALE");
+      const login = await loginJson("o@test.local", PASSWORD);
+      expect(login.status).toBe(200);
+      jarO = login.jar;
+
+      const clientO = await mkClient(userO.id, "Cliente Occasionale");
+      const payO = await mkPayment(userO.id, clientO.id, 100);
+      const created = await api("POST", "/api/invoices", {
+        jar: jarO,
+        body: {
+          clientId: clientO.id,
+          date: "2026-01-06",
+          paymentIds: [payO.id],
+          items: [{ description: "Consulenza", amount: 100 }],
+        },
+      });
+      expect(created.status).toBe(201);
+      invO = created.json as { id: string };
+    });
+
+    test("export XML bloccato con 403 e stato invariato", async () => {
+      const xml = await api("GET", `/api/invoices/${invO.id}?format=xml`, { jar: jarO });
+      expect(xml.status).toBe(403);
+      expect((xml.json as { error: string }).error).toMatch(/SdI/i);
+
+      const stored = await prisma.invoice.findUnique({
+        where: { id: invO.id },
+        select: { status: true },
+      });
+      expect(stored?.status).toBe("DRAFT");
+    });
+
+    test("export PDF attivo come ricevuta", async () => {
+      const pdf = await api("GET", `/api/invoices/${invO.id}?format=pdf`, { jar: jarO });
+      expect(pdf.status).toBe(200);
+      expect(pdf.headers.get("content-type")).toContain("application/pdf");
+      const disposition = pdf.headers.get("content-disposition") || "";
+      expect(disposition).toContain("ricevuta_1_2026.pdf");
+      expect(disposition).not.toContain("fattura_");
     });
   });
 });

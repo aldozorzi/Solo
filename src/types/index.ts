@@ -91,6 +91,7 @@ export const INVOICE_STATUS_COLORS: Record<InvoiceStatus, string> = {
 export const TAX_REGIME_LABELS: Record<TaxRegime, string> = {
   FORFETTARIO: 'Forfettario',
   ORDINARIO: 'Ordinario',
+  PRESTAZIONE_OCCASIONALE: 'Prestazione occasionale',
 };
 
 export const USER_ROLE_LABELS: Record<UserRole, string> = {

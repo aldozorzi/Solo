@@ -5,7 +5,7 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { calculateInvoiceTotals } from '@/lib/tax';
 import { generateFatturaPAXml, userToSdiConfig, generateFileName, invoiceProgressivo } from '@/lib/xml-generator';
-import { generateInvoicePdfBuffer, userToSenderInfo } from '@/lib/pdf-generator';
+import { generateInvoicePdfBuffer, generateRicevutaPdfBuffer, userToSenderInfo } from '@/lib/pdf-generator';
 import { authOptions } from '@/lib/auth';
 import { auditEvent } from '@/lib/audit';
 import { getUserDek, decryptInvoice, decryptClient, decryptPayment, decryptInvoiceItem, encryptInvoiceItemInput } from '@/lib/data-encryption';
@@ -108,13 +108,24 @@ export async function GET(
       clientType: invoice.client.type,
       taxRegime: user.taxRegime,
       senderType: user.senderType,
+      clientVatNumber: invoice.client.vatNumber,
     });
+
+    // Le ricevute per prestazione occasionale non transitano mai da SdI:
+    // niente XML, niente transizione di stato legata all'esportazione.
+    const isRicevuta = user.taxRegime === 'PRESTAZIONE_OCCASIONALE';
 
     const sdiConfig = userToSdiConfig(user);
     sdiConfig.progressivoInvio = invoiceProgressivo(invoiceForExport);
     const senderInfo = userToSenderInfo(user);
 
     if (format === 'xml') {
+      if (isRicevuta) {
+        return NextResponse.json(
+          { error: 'Le ricevute per prestazione occasionale non prevedono invio telematico SdI' },
+          { status: 403 }
+        );
+      }
       // Transizione di stato all'esportazione XML: totalmente pagata -> PAID, altrimenti ISSUED.
       // Il confronto è sull'importo dovuto dal cliente (imponibile + IVA, senza bollo:
       // il bollo virtuale è versato dall'emittente tramite F24). Le annullate non si toccano.
@@ -162,18 +173,28 @@ export async function GET(
         vatAmount: liveVat,
         totalAmount: Math.round((liveSubtotal + liveVat) * 100) / 100,
       };
-      const buffer = await generateInvoicePdfBuffer({
-        invoice: invoiceForExport,
-        totals: pdfTotals,
-        sender: senderInfo,
-      });
+      const buffer = isRicevuta
+        ? await generateRicevutaPdfBuffer({
+            invoice: invoiceForExport,
+            totals: pdfTotals,
+            sender: senderInfo,
+          })
+        : await generateInvoicePdfBuffer({
+            invoice: invoiceForExport,
+            totals: pdfTotals,
+            sender: senderInfo,
+          });
 
       auditEvent({ type: 'invoice.exported', actor: userId, target: id, details: { format: 'pdf' } });
+
+      const pdfFileName = isRicevuta
+        ? `ricevuta_${invoice.number}_${invoice.year}.pdf`
+        : `fattura_${invoice.number}_${invoice.year}.pdf`;
 
       return new NextResponse(new Uint8Array(buffer), {
         headers: {
           'Content-Type': 'application/pdf',
-          'Content-Disposition': `inline; filename="fattura_${invoice.number}_${invoice.year}.pdf"`,
+          'Content-Disposition': `inline; filename="${pdfFileName}"`,
         },
       });
     }
@@ -250,11 +271,13 @@ export async function PUT(
     );
     const effectiveItems = data.items ?? existingItems;
     const subtotal = effectiveItems.reduce((sum, item) => sum + item.amount, 0);
+    const decClient = await decryptClient(client, dek);
     const totals = calculateInvoiceTotals({
       subtotal,
       clientType: client.type,
       taxRegime: user.taxRegime,
       senderType: user.senderType,
+      clientVatNumber: decClient.vatNumber,
     });
 
     const encDate = data.date !== undefined

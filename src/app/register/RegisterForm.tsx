@@ -229,8 +229,9 @@ export default function RegisterForm() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="FORFETTARIO">Forfettario</SelectItem>
-                        <SelectItem value="ORDINARIO">Ordinario</SelectItem>
+                      <SelectItem value="FORFETTARIO">Forfettario</SelectItem>
+                      <SelectItem value="ORDINARIO">Ordinario</SelectItem>
+                      <SelectItem value="PRESTAZIONE_OCCASIONALE">Prestazione occasionale</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

@@ -35,11 +35,13 @@ interface InvoiceFormProps {
   clients: DecryptedClient[];
   pendingPayments: PaymentWithRelations[];
   onSuccess: () => void;
+  documentKind?: 'fattura' | 'ricevuta';
 }
 
-export function InvoiceForm({ clients, pendingPayments, onSuccess }: InvoiceFormProps) {
+export function InvoiceForm({ clients, pendingPayments, onSuccess, documentKind = 'fattura' }: InvoiceFormProps) {
   const [open, setOpen] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState('');
+  const docLabel = documentKind === 'ricevuta' ? 'Ricevuta' : 'Fattura';
 
   const form = useForm<InvoiceFormData>({
     resolver: zodResolver(invoiceSchema) as any,
@@ -114,12 +116,12 @@ export function InvoiceForm({ clients, pendingPayments, onSuccess }: InvoiceForm
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button className="w-full sm:w-auto">
-          <span className="flex items-center gap-2">Nuova Fattura</span>
+          <span className="flex items-center gap-2">Nuova {docLabel}</span>
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Genera Fattura Cumulativa</DialogTitle>
+          <DialogTitle>Genera {docLabel} Cumulativa</DialogTitle>
         </DialogHeader>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 mt-4">
           <div>
@@ -257,7 +259,7 @@ export function InvoiceForm({ clients, pendingPayments, onSuccess }: InvoiceForm
               Annulla
             </Button>
             <Button type="submit" disabled={itemFields.length === 0 || totalsMismatch}>
-              Genera Fattura
+              Genera {docLabel}
             </Button>
           </div>
         </form>

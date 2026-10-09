@@ -7,7 +7,7 @@ const config: Config = {
   roots: ['<rootDir>/tests'],
   setupFiles: ['<rootDir>/tests/support/load-env.ts'],
   testMatch: ['**/*.test.ts'],
-  moduleFileExtensions: ['ts', 'js', 'json'],
+  moduleFileExtensions: ['ts', 'tsx', 'js', 'json'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
   },

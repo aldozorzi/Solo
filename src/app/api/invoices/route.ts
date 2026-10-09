@@ -129,11 +129,13 @@ export async function POST(request: NextRequest) {
     const user = await getUserWithTaxRegime(userId);
 
     const subtotal = data.items.reduce((sum, item) => sum + item.amount, 0);
+    const decClient = await decryptClient(client, dek);
     const totals = calculateInvoiceTotals({
       subtotal,
       clientType: client.type,
       taxRegime: user.taxRegime,
       senderType: user.senderType,
+      clientVatNumber: decClient.vatNumber,
     });
 
     const lastInvoice = await prisma.invoice.findFirst({
