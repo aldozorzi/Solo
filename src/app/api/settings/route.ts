@@ -25,7 +25,7 @@ const userSettingsSchema = z.object({
   zipCode: z.string().length(5, 'CAP deve essere 5 cifre'),
   province: z.string().length(2, 'Provincia (sigla, 2 caratteri)'),
   country: z.string().default('IT'),
-  taxRegime: z.enum(['FORFETTARIO', 'ORDINARIO']),
+  taxRegime: z.enum(['FORFETTARIO', 'ORDINARIO', 'PRESTAZIONE_OCCASIONALE']),
   senderType: z.enum(['LIBERO_PROFESSIONISTA', 'DITTA_INDIVIDUALE', 'SOCIETA']),
 });
 

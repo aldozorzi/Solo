@@ -42,6 +42,7 @@ export default function Dashboard({ initialSection = 'payments' }: { initialSect
 
   const user = session?.user as UserSession | undefined;
   const isAdmin = user?.role === 'ADMIN';
+  const isOccasionale = user?.taxRegime === 'PRESTAZIONE_OCCASIONALE';
 
   const fetchData = async () => {
     setLoading(true);
@@ -281,26 +282,28 @@ export default function Dashboard({ initialSection = 'payments' }: { initialSect
                                   <Trash2 className="w-4 h-4 text-red-500" />
                                 </Button>
                               </>
-                            ) : (
-                              <>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => downloadXml(payment.invoiceId as string)}
-                                  title="Scarica fattura XML"
-                                >
-                                  <Download className="w-4 h-4" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => openPdf(payment.invoiceId as string)}
-                                  title="Apri fattura PDF"
-                                >
-                                  <FileText className="w-4 h-4" />
-                                </Button>
-                              </>
-                            )}
+                              ) : (
+                                <>
+                                  {!isOccasionale && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => downloadXml(payment.invoiceId as string)}
+                                      title="Scarica fattura XML"
+                                    >
+                                      <Download className="w-4 h-4" />
+                                    </Button>
+                                  )}
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => openPdf(payment.invoiceId as string)}
+                                    title={isOccasionale ? 'Apri ricevuta PDF' : 'Apri fattura PDF'}
+                                  >
+                                    <FileText className="w-4 h-4" />
+                                  </Button>
+                                </>
+                              )}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -314,8 +317,13 @@ export default function Dashboard({ initialSection = 'payments' }: { initialSect
 
         <TabsContent value="invoices">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-semibold">Fatture Emesse</h2>
-            <InvoiceForm clients={clients} pendingPayments={pendingPayments} onSuccess={handleSuccess} />
+            <h2 className="text-xl font-semibold">{isOccasionale ? 'Ricevute Emesse' : 'Fatture Emesse'}</h2>
+            <InvoiceForm
+              clients={clients}
+              pendingPayments={pendingPayments}
+              onSuccess={handleSuccess}
+              documentKind={isOccasionale ? 'ricevuta' : 'fattura'}
+            />
           </div>
 
           <Card>
@@ -336,7 +344,7 @@ export default function Dashboard({ initialSection = 'payments' }: { initialSect
                   {invoices.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                        Nessuna fattura emessa
+                        {isOccasionale ? 'Nessuna ricevuta emessa' : 'Nessuna fattura emessa'}
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -346,6 +354,7 @@ export default function Dashboard({ initialSection = 'payments' }: { initialSect
                         clientType: invoice.client.type,
                         taxRegime: user?.taxRegime || 'FORFETTARIO',
                         senderType: user?.senderType || 'LIBERO_PROFESSIONISTA',
+                        clientVatNumber: invoice.client.vatNumber,
                       });
                       const displayTotal = displayTotals.subtotal + displayTotals.vatAmount;
                       return (
@@ -376,10 +385,12 @@ export default function Dashboard({ initialSection = 'payments' }: { initialSect
                             >
                               <Edit className="w-4 h-4" />
                             </Button>
-                            <Button variant="ghost" size="icon" onClick={() => downloadXml(invoice.id)} title="Scarica XML SdI">
-                              <Download className="w-4 h-4" />
-                            </Button>
-                            <Button variant="ghost" size="icon" onClick={() => openPdf(invoice.id)} title="Apri PDF">
+                            {!isOccasionale && (
+                              <Button variant="ghost" size="icon" onClick={() => downloadXml(invoice.id)} title="Scarica XML SdI">
+                                <Download className="w-4 h-4" />
+                              </Button>
+                            )}
+                            <Button variant="ghost" size="icon" onClick={() => openPdf(invoice.id)} title={isOccasionale ? 'Apri ricevuta PDF' : 'Apri PDF'}>
                               <FileText className="w-4 h-4" />
                             </Button>
                             <Button variant="ghost" size="icon" onClick={() => deleteInvoice(invoice.id)} title="Elimina">
@@ -493,6 +504,7 @@ export default function Dashboard({ initialSection = 'payments' }: { initialSect
               clients={clients}
               pendingPayments={pendingPayments}
               onSuccess={handleSuccess}
+              documentKind={isOccasionale ? 'ricevuta' : 'fattura'}
             />
           )}
         </DialogContent>

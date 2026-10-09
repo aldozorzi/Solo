@@ -1,5 +1,5 @@
 export type ClientType = 'ITALY' | 'EU' | 'EXTRA_EU';
-export type TaxRegime = 'FORFETTARIO' | 'ORDINARIO';
+export type TaxRegime = 'FORFETTARIO' | 'ORDINARIO' | 'PRESTAZIONE_OCCASIONALE';
 
 export type SenderType = 'LIBERO_PROFESSIONISTA' | 'DITTA_INDIVIDUALE' | 'SOCIETA';
 
@@ -8,6 +8,12 @@ export interface CalculateInvoiceInput {
   clientType: ClientType;
   taxRegime: TaxRegime;
   senderType: SenderType;
+  /**
+   * P.IVA del cliente decifrata. Serve solo al ramo prestazione occasionale:
+   * per clienti IT con P.IVA si presume un sostituto d'imposta (ritenuta 20%),
+   * senza P.IVA un committente privato (nessuna ritenuta). Per gli altri regimi è ignorato.
+   */
+  clientVatNumber?: string | null;
 }
 
 export interface InvoiceTotals {
@@ -30,17 +36,86 @@ export interface InvoiceTotals {
 const FORFETTARIO_STAMP_THRESHOLD = 77.47;
 const STAMP_DUTY_AMOUNT = 2.0;
 
+export const WITHHOLDING_RATE_OCCASIONALE = 0.2;
+
 export function calculateInvoiceTotals({
   subtotal,
   clientType,
   taxRegime,
   senderType,
+  clientVatNumber,
 }: CalculateInvoiceInput): InvoiceTotals {
   if (taxRegime === 'FORFETTARIO') {
     return calculateForfettarioTotals({ subtotal, clientType });
   }
-  
+
+  if (taxRegime === 'PRESTAZIONE_OCCASIONALE') {
+    return calculateOccasionaleTotals({ subtotal, clientType, clientVatNumber });
+  }
+
   return calculateOrdinarioTotals({ subtotal, clientType, senderType });
+}
+
+/**
+ * Prestazione di lavoro autonomo occasionale (art. 67, lett. l, D.P.R. 917/1986):
+ * - sempre fuori campo IVA (art. 5 D.P.R. 633/1972), mai IVA, mai XML SdI;
+ * - ritenuta d'acconto 20% (art. 25 D.P.R. 600/1973) solo verso clienti IT
+ *   sostituti d'imposta (euristica: presenza della P.IVA), mai verso non residenti;
+ * - nessun bollo virtuale tracciato (la ricevuta di riferimento non lo espone):
+ *   l'eventuale marca da bollo fisica resta a carico dell'emittente fuori app.
+ */
+function calculateOccasionaleTotals({
+  subtotal,
+  clientType,
+  clientVatNumber,
+}: {
+  subtotal: number;
+  clientType: ClientType;
+  clientVatNumber?: string | null;
+}): InvoiceTotals {
+  const hasWithholding =
+    clientType === 'ITALY' && !!clientVatNumber && clientVatNumber.trim() !== '';
+  const withholdingAmount = hasWithholding
+    ? Math.round(subtotal * WITHHOLDING_RATE_OCCASIONALE * 100) / 100
+    : 0;
+
+  const baseNotes =
+    "Operazione fuori campo IVA ai sensi dell'art. 5 D.P.R. 633/1972. " +
+    "Si dichiara che il compenso è percepito nell'ambito di prestazioni di lavoro autonomo occasionale.";
+
+  let legalNotes: string;
+  if (clientType === 'EXTRA_EU') {
+    legalNotes =
+      'Trattandosi di prestazione resa a soggetto non residente, non si applica la ritenuta ' +
+      "d'acconto (art. 25 D.P.R. 600/1973). " +
+      baseNotes;
+  } else if (clientType === 'EU') {
+    legalNotes =
+      'Trattandosi di prestazione resa a soggetto UE non residente, non si applica la ritenuta ' +
+      "d'acconto (art. 25 D.P.R. 600/1973). " +
+      baseNotes;
+  } else if (hasWithholding) {
+    legalNotes =
+      "Si applica la ritenuta d'acconto del 20% a titolo di acconto (art. 25 D.P.R. 600/1973). " +
+      baseNotes;
+  } else {
+    legalNotes =
+      "Non si applica la ritenuta d'acconto (committente non sostituto d'imposta). " +
+      baseNotes;
+  }
+
+  return {
+    subtotal,
+    stampDutyAmount: 0,
+    totalAmount: subtotal,
+    vatNatureCode: '',
+    legalNotes,
+    normativeRef: 'Art.67 l.l DPR 917/86 - occasionale',
+    vatAmount: 0,
+    vatRate: 0,
+    withholdingAmount,
+    hasWithholding,
+  };
 }
 
 function calculateForfettarioTotals({

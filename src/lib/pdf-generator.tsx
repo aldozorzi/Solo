@@ -1,13 +1,19 @@
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet, Font, type DocumentProps } from '@react-pdf/renderer';
-import { User, TaxRegime, ClientType } from '@prisma/client';
+import { User, TaxRegime } from '@prisma/client';
 import type {
   DecryptedClient,
   DecryptedInvoice,
   DecryptedInvoiceItem,
   DecryptedPayment,
 } from './data-encryption';
-import { InvoiceTotals, formatCurrency, formatDate, formatDualAmount } from './tax';
+import { InvoiceTotals, formatCurrency, formatDate } from './tax';
+import {
+  buildRicevutaContent,
+  formatClientAddress,
+  formatPaymentLine,
+  formatSenderAddress,
+} from './ricevuta-content';
 
 Font.register({
   family: 'Ubuntu Mono',
@@ -86,37 +92,6 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
 });
-
-function formatSenderAddress(sender: SenderInfo): string {
-  const parts: string[] = [];
-  if (sender.address) parts.push(sender.address);
-  const cityPart = [sender.zipCode, sender.city].filter(Boolean).join(', ');
-  if (cityPart) parts.push(sender.province ? `${cityPart} (${sender.province})` : cityPart);
-  return parts.join(', ') || 'N/A';
-}
-
-function formatClientAddress(client: DecryptedClient): string {
-  const parts: string[] = [];
-  if (client.address) parts.push(client.address);
-  const locality = [client.zipCode, client.city].filter(Boolean).join(' ');
-  if (locality) parts.push(locality);
-  if (client.country) parts.push(client.country);
-  return parts.join(', ') || 'N/A';
-}
-
-function formatPaymentLine(
-  payment: DecryptedPayment,
-  clientType: ClientType
-): string {
-  const date = formatDate(payment.paidAt);
-  const amounts = formatDualAmount(
-    payment.amount,
-    payment.originalAmount,
-    payment.originalCurrency,
-    clientType
-  );
-  return `- Accredito del ${date}: ${amounts}`;
-}
 
 export function InvoicePdfDocument(props: InvoicePdfProps) {
   const { invoice, totals, sender } = props;
@@ -214,6 +189,50 @@ export function InvoicePdfDocument(props: InvoicePdfProps) {
       </Page>
     </Document>
   );
+}
+
+/**
+ * Ricevuta per prestazione occasionale (art. 67, lett. l, D.P.R. 917/1986).
+ * Ricalca in tutto e per tutto la ricevuta di riferimento (SPECS/ricevuta.pdf):
+ * intestazione RICEVUTA, emittente senza P.IVA, cliente senza codici fiscali,
+ * accrediti dinamici con doppi importi, TOTALE LORDO e note legali di regime.
+ * Le righe di ritenuta/netto compaiono solo quando la ritenuta si applica
+ * (caso non presente nel riferimento, che è verso non residente).
+ */
+export function RicevutaPdfDocument(props: InvoicePdfProps) {
+  const content = buildRicevutaContent(props);
+  const blocks: string[][] = [
+    content.header,
+    content.emitter,
+    content.client,
+    content.oggetto,
+    content.payments,
+    content.totals,
+    content.notes,
+    content.signature,
+  ];
+
+  return (
+    <Document>
+      <Page size="A4" style={styles.page}>
+        {blocks.map((lines, blockIndex) => (
+          <View key={blockIndex} style={styles.block}>
+            {lines.map((line, lineIndex) => (
+              <Text key={lineIndex}>{line}</Text>
+            ))}
+          </View>
+        ))}
+      </Page>
+    </Document>
+  );
+}
+
+export async function generateRicevutaPdfBuffer(props: InvoicePdfProps): Promise<Buffer> {
+  const { renderToBuffer } = await import('@react-pdf/renderer');
+
+  const element = React.createElement(RicevutaPdfDocument, props) as unknown as React.ReactElement<DocumentProps>;
+  const buffer = await renderToBuffer(element);
+  return Buffer.from(buffer);
 }
 
 export async function generateInvoicePdfBuffer(props: InvoicePdfProps): Promise<Buffer> {

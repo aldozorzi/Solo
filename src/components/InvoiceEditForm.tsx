@@ -302,11 +302,14 @@ export function InvoiceEditDialog({
   clients,
   pendingPayments,
   onSuccess,
-}: InvoiceEditFormProps & { invoice: InvoiceWithRelations }) {
+  documentKind = 'fattura',
+}: InvoiceEditFormProps & { invoice: InvoiceWithRelations; documentKind?: 'fattura' | 'ricevuta' }) {
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Modifica Fattura {invoice.number}/{invoice.year}</DialogTitle>
+        <DialogTitle>
+          Modifica {documentKind === 'ricevuta' ? 'Ricevuta' : 'Fattura'} {invoice.number}/{invoice.year}
+        </DialogTitle>
       </DialogHeader>
       <InvoiceEditForm
         invoice={invoice}

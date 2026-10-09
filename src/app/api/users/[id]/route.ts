@@ -32,7 +32,7 @@ const userUpdateSchema = z.object({
   zipCode: z.string().length(5).optional(),
   province: z.string().length(2).optional(),
   country: z.string().optional(),
-  taxRegime: z.enum(['FORFETTARIO', 'ORDINARIO']).optional(),
+  taxRegime: z.enum(['FORFETTARIO', 'ORDINARIO', 'PRESTAZIONE_OCCASIONALE']).optional(),
   senderType: z.enum(['LIBERO_PROFESSIONISTA', 'DITTA_INDIVIDUALE', 'SOCIETA']).optional(),
   // Niente password/totpReset qui: password e 2FA si cambiano solo via email
   // (setup/reset dell'utente stesso). La DELETE sotto richiede comunque re-auth.
