@@ -18,7 +18,7 @@ import { ThemeSelector } from './ThemeSelector';
 import { calculateInvoiceTotals } from '@/lib/tax';
 import { SettingsForm } from './SettingsForm';
 import { UserManagement } from './UserManagement';
-import { Client, PaymentWithRelations, InvoiceWithRelations, InvoiceStatus, INVOICE_STATUS_LABELS, INVOICE_STATUS_COLORS, CLIENT_TYPE_LABELS, UserRole, USER_ROLE_LABELS, TAX_REGIME_LABELS, UserSession } from '@/types';
+import { DecryptedClient, PaymentWithRelations, InvoiceWithRelations, InvoiceStatus, INVOICE_STATUS_LABELS, INVOICE_STATUS_COLORS, CLIENT_TYPE_LABELS, UserRole, USER_ROLE_LABELS, TAX_REGIME_LABELS, UserSession } from '@/types';
 import { Toaster } from '@/components/ui/sonner';
 import { signOut, useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
@@ -30,13 +30,13 @@ export default function Dashboard({ initialSection = 'payments' }: { initialSect
   const { data: session, status } = useSession();
   const router = useRouter();
   
-  const [clients, setClients] = useState<Client[]>([]);
+  const [clients, setClients] = useState<DecryptedClient[]>([]);
   const [payments, setPayments] = useState<PaymentWithRelations[]>([]);
   const [invoices, setInvoices] = useState<InvoiceWithRelations[]>([]);
   const [pendingPayments, setPendingPayments] = useState<PaymentWithRelations[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab] = useState<TabValue>(initialSection);
-  const [editingClient, setEditingClient] = useState<Client | null>(null);
+  const [editingClient, setEditingClient] = useState<DecryptedClient | null>(null);
   const [editingPayment, setEditingPayment] = useState<PaymentWithRelations | null>(null);
   const [editingInvoice, setEditingInvoice] = useState<InvoiceWithRelations | null>(null);
 
@@ -101,6 +101,7 @@ export default function Dashboard({ initialSection = 'payments' }: { initialSect
   };
 
   const handleSignOut = async () => {
+    await fetch('/api/login', { method: 'DELETE' }).catch(() => undefined);
     await signOut({ callbackUrl: '/login' });
     router.push('/login');
   };

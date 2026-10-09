@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { calculateInvoiceTotals } from '@/lib/tax';
 import { authOptions } from '@/lib/auth';
 import { auditEvent } from '@/lib/audit';
+import { getUserDek, decryptInvoice, decryptClient, decryptPayment, decryptInvoiceItem, encryptInvoiceInput, encryptInvoiceItemInput } from '@/lib/data-encryption';
 
 const invoiceItemSchema = z.object({
   description: z.string().min(1),
@@ -66,6 +67,7 @@ async function verifyPaymentsOwnership(userId: string, paymentIds: string[]) {
 export async function GET(request: NextRequest) {
   try {
     const userId = await getUserId();
+    const dek = await getUserDek(userId);
     const { searchParams } = new URL(request.url);
     const clientId = searchParams.get('clientId');
 
@@ -84,7 +86,14 @@ export async function GET(request: NextRequest) {
       },
       orderBy: [{ year: 'desc' }, { number: 'desc' }],
     });
-    return NextResponse.json(invoices);
+    const decrypted = await Promise.all(invoices.map(async (inv) => {
+      const invoice = await decryptInvoice(inv, dek);
+      invoice.client = await decryptClient(inv.client, dek);
+      invoice.items = await Promise.all(inv.items.map(i => decryptInvoiceItem(i, dek)));
+      invoice.payments = await Promise.all(inv.payments.map(p => decryptPayment(p, dek)));
+      return invoice;
+    }));
+    return NextResponse.json(decrypted);
   } catch (error) {
     if (error instanceof Error && (error.message === 'Non autenticato' || error.message.includes('accesso negato'))) {
       return NextResponse.json({ error: error.message }, { status: error.message === 'Non autenticato' ? 401 : 403 });
@@ -97,6 +106,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const userId = await getUserId();
+    const dek = await getUserDek(userId);
     const body = await request.json();
     const data = invoiceSchema.parse(body);
 
@@ -134,23 +144,26 @@ export async function POST(request: NextRequest) {
     const nextNumber = (lastInvoice?.number || 0) + 1;
     const year = new Date(data.date).getFullYear();
 
+    const encryptedInvoice = encryptInvoiceInput({
+      number: nextNumber,
+      year,
+      date: new Date(data.date),
+      clientId: data.clientId,
+      subtotalAmount: totals.subtotal,
+      stampDutyAmount: totals.stampDutyAmount,
+      totalAmount: totals.totalAmount,
+      notes: totals.legalNotes,
+      status: 'DRAFT',
+    }, dek);
+
+    const encryptedItems = data.items.map(item => encryptInvoiceItemInput(item, dek));
+
     const invoice = await prisma.invoice.create({
       data: {
-        number: nextNumber,
-        year,
-        date: new Date(data.date),
+        ...encryptedInvoice,
         userId,
-        status: 'DRAFT',
-        clientId: data.clientId,
-        subtotalAmount: totals.subtotal,
-        stampDutyAmount: totals.stampDutyAmount,
-        totalAmount: totals.totalAmount,
-        notes: totals.legalNotes,
         items: {
-          create: data.items.map((item, index) => ({
-            description: item.description,
-            amount: item.amount,
-          })),
+          create: encryptedItems,
         },
         payments: {
           connect: data.paymentIds.map(id => ({ id })),
@@ -170,7 +183,11 @@ export async function POST(request: NextRequest) {
       details: { number: invoice.number, year: invoice.year, clientId: data.clientId },
     });
 
-    return NextResponse.json(invoice, { status: 201 });
+    const decrypted = await decryptInvoice(invoice, dek);
+    decrypted.client = await decryptClient(invoice.client, dek);
+    decrypted.items = await Promise.all(invoice.items.map(i => decryptInvoiceItem(i, dek)));
+    decrypted.payments = await Promise.all(invoice.payments.map(p => decryptPayment(p, dek)));
+    return NextResponse.json(decrypted, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: error.issues }, { status: 400 });

@@ -14,7 +14,7 @@ import { Table, TableHeader, TableRow, TableCell, TableBody } from '@/components
 import { Checkbox } from '@/components/ui/checkbox';
 import { format } from 'date-fns';
 import { Plus, Trash2, X } from 'lucide-react';
-import { PaymentWithRelations, Client } from '@/types';
+import { PaymentWithRelations, DecryptedClient } from '@/types';
 import { formatDualAmountShort } from '@/lib/tax';
 
 const invoiceItemSchema = z.object({
@@ -32,7 +32,7 @@ const invoiceSchema = z.object({
 type InvoiceFormData = z.infer<typeof invoiceSchema>;
 
 interface InvoiceFormProps {
-  clients: Client[];
+  clients: DecryptedClient[];
   pendingPayments: PaymentWithRelations[];
   onSuccess: () => void;
 }

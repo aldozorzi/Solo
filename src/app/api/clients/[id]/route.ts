@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
+import { getUserDek, decryptClient, encryptClientPatch } from '@/lib/data-encryption';
 
 const clientUpdateSchema = z.object({
   name: z.string().min(1).optional(),
@@ -41,6 +42,7 @@ export async function GET(
 ) {
   try {
     const userId = await getUserId();
+    const dek = await getUserDek(userId);
     const { id } = await params;
     
     await verifyClientOwnership(userId, id);
@@ -48,11 +50,16 @@ export async function GET(
     const client = await prisma.client.findUnique({
       where: { id },
       include: {
-        payments: { orderBy: { paidAt: 'desc' } },
-        invoices: { orderBy: { date: 'desc' } },
+        // paidAt/date sono cifrati: ordinamento su createdAt (plaintext).
+        payments: { orderBy: { createdAt: 'desc' } },
+        invoices: { orderBy: { createdAt: 'desc' } },
       },
     });
-    return NextResponse.json(client);
+    if (!client) {
+      return NextResponse.json({ error: 'Cliente non trovato' }, { status: 404 });
+    }
+    const decrypted = await decryptClient(client, dek);
+    return NextResponse.json(decrypted);
   } catch (error) {
     if (error instanceof Error && (error.message === 'Non autenticato' || error.message.includes('accesso negato'))) {
       return NextResponse.json({ error: error.message }, { status: error.message === 'Non autenticato' ? 401 : 403 });
@@ -68,6 +75,7 @@ export async function PUT(
 ) {
   try {
     const userId = await getUserId();
+    const dek = await getUserDek(userId);
     const { id } = await params;
     
     await verifyClientOwnership(userId, id);
@@ -75,11 +83,14 @@ export async function PUT(
     const body = await request.json();
     const data = clientUpdateSchema.parse(body);
 
+    const encrypted = encryptClientPatch(data, dek);
+
     const client = await prisma.client.update({
       where: { id },
-      data,
+      data: encrypted,
     });
-    return NextResponse.json(client);
+    const decrypted = await decryptClient(client, dek);
+    return NextResponse.json(decrypted);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: error.issues }, { status: 400 });

@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth';
 import { prisma } from '@/lib/prisma';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
+import { getUserDek, decryptPayment, decryptClient } from '@/lib/data-encryption';
+import { encryptField as encField } from '@/lib/crypto';
 
 const paymentUpdateSchema = z.object({
   clientId: z.string().min(1, 'Cliente obbligatorio').optional(),
@@ -45,6 +47,7 @@ export async function PUT(
 ) {
   try {
     const userId = await getUserId();
+    const dek = await getUserDek(userId);
     const { id } = await params;
 
     await getPendingPayment(userId, id);
@@ -65,30 +68,58 @@ export async function PUT(
       .trim()
       .toUpperCase() || null;
 
+    const encrypted: Record<string, unknown> = {};
+    if (data.clientId !== undefined) encrypted.clientId = data.clientId;
+    if (data.amount !== undefined) {
+      const enc = encField(String(data.amount), dek);
+      encrypted.amountEnc = enc.ciphertext;
+      encrypted.amountIv = enc.iv;
+    }
+    if (data.currency !== undefined) {
+      const enc = encField(data.currency, dek);
+      encrypted.currencyEnc = enc.ciphertext;
+      encrypted.currencyIv = enc.iv;
+    }
+    if (data.originalAmount !== undefined) {
+      if (data.originalAmount !== null) {
+        const enc = encField(String(data.originalAmount), dek);
+        encrypted.originalAmountEnc = enc.ciphertext;
+        encrypted.originalAmountIv = enc.iv;
+      } else {
+        encrypted.originalAmountEnc = null;
+        encrypted.originalAmountIv = null;
+      }
+    }
+    if (data.originalCurrency !== undefined || data.originalAmount === null) {
+      if (data.originalAmount !== undefined && data.originalAmount !== null && originalCurrency) {
+        const enc = encField(originalCurrency, dek);
+        encrypted.originalCurrencyEnc = enc.ciphertext;
+        encrypted.originalCurrencyIv = enc.iv;
+      } else {
+        encrypted.originalCurrencyEnc = null;
+        encrypted.originalCurrencyIv = null;
+      }
+    }
+    if (data.paidAt !== undefined) {
+      const enc = encField(new Date(data.paidAt).toISOString(), dek);
+      encrypted.paidAtEnc = enc.ciphertext;
+      encrypted.paidAtIv = enc.iv;
+    }
+    if (data.description !== undefined) {
+      const enc = encField(data.description, dek);
+      encrypted.descriptionEnc = enc.ciphertext;
+      encrypted.descriptionIv = enc.iv;
+    }
+
     const payment = await prisma.payment.update({
       where: { id },
-      data: {
-        ...(data.clientId !== undefined ? { clientId: data.clientId } : {}),
-        ...(data.amount !== undefined ? { amount: data.amount } : {}),
-        ...(data.currency !== undefined ? { currency: data.currency } : {}),
-        ...(data.originalAmount !== undefined ? { originalAmount: data.originalAmount } : {}),
-        ...(data.originalCurrency !== undefined || data.originalAmount === null
-          ? {
-              originalCurrency:
-                data.originalAmount !== undefined &&
-                data.originalAmount !== null &&
-                originalCurrency
-                  ? originalCurrency
-                  : null,
-            }
-          : {}),
-        ...(data.paidAt !== undefined ? { paidAt: new Date(data.paidAt) } : {}),
-        ...(data.description !== undefined ? { description: data.description } : {}),
-      },
+      data: encrypted,
       include: { client: true },
     });
 
-    return NextResponse.json(payment);
+    const decrypted = await decryptPayment(payment, dek);
+    decrypted.client = await decryptClient(payment.client, dek);
+    return NextResponse.json(decrypted);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: error.issues }, { status: 400 });

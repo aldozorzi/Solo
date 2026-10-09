@@ -115,8 +115,18 @@ const PASSWORD = "Password123456";
 let PASSWORD_HASH = "";
 
 async function mkUser(email: string, role: "ADMIN" | "USER" = "USER") {
+  // Stessa password di login (PASSWORD): W_pwd valido, sbloccabile con password.
+  const { generateUserKey } = await import("@/lib/crypto");
+  const { wPwd, wSys, argon2Salt } = await generateUserKey(PASSWORD);
   return prisma.user.create({
     data: {
+      userKey: {
+        create: {
+          argon2Salt: argon2Salt.toString("base64"),
+          wPwd,
+          wSys,
+        },
+      },
       email,
       name: email,
       passwordHash: PASSWORD_HASH,
@@ -135,35 +145,44 @@ async function mkUser(email: string, role: "ADMIN" | "USER" = "USER") {
 }
 
 async function mkClient(userId: string, name: string) {
-  return prisma.client.create({
-    data: {
-      userId,
-      name,
-      type: "ITALY" as never,
-      sdiCode: "0000000",
-      zipCode: "10100",
-      country: "IT",
-    },
-  });
+  const { getUserDek, encryptClientInput } = await import("@/lib/data-encryption");
+  const dek = await getUserDek(userId, undefined, prisma);
+  const encrypted = encryptClientInput(
+    { name, type: "ITALY", sdiCode: "0000000", zipCode: "10100", country: "IT" },
+    dek
+  );
+  return prisma.client.create({ data: { userId, ...encrypted } });
 }
 
 async function mkPayment(userId: string, clientId: string, amount: number, invoiceId?: string) {
+  const { getUserDek, encryptPaymentInput } = await import("@/lib/data-encryption");
+  const dek = await getUserDek(userId, undefined, prisma);
+  const encrypted = encryptPaymentInput(
+    {
+      amount,
+      currency: "EUR",
+      paidAt: new Date("2026-01-05"),
+      description: "test",
+    },
+    dek
+  );
   return prisma.payment.create({
     data: {
       userId,
       clientId,
-      amount,
-      paidAt: new Date("2026-01-05"),
-      description: "test",
+      ...encrypted,
       ...(invoiceId ? { invoiceId } : {}),
     },
   });
 }
 
 async function mkInvoice(userId: string, clientId: string, paymentIds: string[], n: number) {
-  return prisma.invoice.create({
-    data: {
-      userId,
+  const { getUserDek, encryptInvoiceInput, encryptInvoiceItemInput } = await import(
+    "@/lib/data-encryption"
+  );
+  const dek = await getUserDek(userId, undefined, prisma);
+  const encrypted = encryptInvoiceInput(
+    {
       number: n,
       year: 2026,
       date: new Date("2026-01-06"),
@@ -171,8 +190,15 @@ async function mkInvoice(userId: string, clientId: string, paymentIds: string[],
       subtotalAmount: 100,
       stampDutyAmount: 0,
       totalAmount: 100,
-      status: "ISSUED" as never,
-      items: { create: { description: "riga", amount: 100 } },
+      status: "ISSUED",
+    },
+    dek
+  );
+  return prisma.invoice.create({
+    data: {
+      userId,
+      ...encrypted,
+      items: { create: encryptInvoiceItemInput({ description: "riga", amount: 100 }, dek) },
       payments: { connect: paymentIds.map((id) => ({ id })) },
     },
   });
@@ -371,27 +397,22 @@ describe("security: anti escalation", () => {
     expect(a.text).toBe(b.text);
   });
 
-  test("login nativo: open redirect bloccato, callback ok + sessione valida", async () => {
-    // Senza header Accept: JSON -> il server risponde con redirect 303 (flusso nativo).
+  test("login JSON-only: nessun redirect, callback esterno ignorato + sessione valida", async () => {
+    // Il login è solo JSON (niente flusso nativo): nessun redirect, quindi nessun
+    // open redirect possibile. Il callbackUrl esterno viene ignorato.
     const evil = await api("POST", "/api/login", {
-      json: false,
       body: { email: "b@test.local", password: PASSWORD, callbackUrl: "https://evil.example.com/" },
     });
-    expect(evil.status).toBe(303);
-    // L'host esterno deve essere neutralizzato: redirect solo same-origin verso "/".
-    const evilUrl = new URL(evil.headers.get("location") || "", BASE);
-    expect(evilUrl.origin).toBe(new URL(BASE).origin);
-    expect(evilUrl.pathname).toBe("/");
+    expect(evil.status).toBe(200);
+    expect(evil.headers.get("location")).toBeNull();
+    expect((evil.json as { ok: boolean }).ok).toBe(true);
     const jar = new Jar();
     const ok = await api("POST", "/api/login", {
       jar,
-      json: false,
       body: { email: "b@test.local", password: PASSWORD, callbackUrl: "/" },
     });
-    expect(ok.status).toBe(303);
-    const okUrl = new URL(ok.headers.get("location") || "", BASE);
-    expect(okUrl.origin).toBe(new URL(BASE).origin);
-    expect(okUrl.pathname).toBe("/");
+    expect(ok.status).toBe(200);
+    expect((ok.json as { ok: boolean }).ok).toBe(true);
     const me = await api("GET", "/api/clients", { jar });
     expect(me.status).toBe(200);
   });
@@ -483,5 +504,332 @@ describe("security: anti escalation", () => {
     const content: string = fs.existsSync(AUDIT_LOG) ? fs.readFileSync(AUDIT_LOG, "utf8") : "";
     expect(content).toContain("auth.alert_bruteforce");
     expect(content).toContain("user.created");
+  });
+
+  test("legacy: dati in formato precedente decifrabili + self-heal di W_pwd al login", async () => {
+    const { createCipheriv, randomBytes } = await import("crypto");
+    const { wrapKey, MASTER_KEY } = await import("@/lib/crypto");
+
+    // DEK canonica avvolta in W_sys (MASTER_KEY); W_pwd ASSENTE (come nei DB migrati).
+    const dek = randomBytes(32);
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", dek, iv);
+    const ct = Buffer.concat([cipher.update("Cliente Legacy", "utf8"), cipher.final()]);
+    // Formato legacy: ciphertext = base64(ct || tag), IV separato.
+    const nameEnc = Buffer.concat([ct, cipher.getAuthTag()]).toString("base64");
+    const nameIv = iv.toString("base64");
+    const wSys = wrapKey(dek, MASTER_KEY);
+
+    const user = await prisma.user.create({
+      data: {
+        email: "legacy@test.local",
+        name: "Legacy",
+        passwordHash: PASSWORD_HASH,
+        role: "USER" as never,
+        businessName: "Test",
+        vatNumber: "00743110157",
+        taxCode: "ZRZLDA82M09D969K",
+        address: "x",
+        city: "x",
+        zipCode: "00000",
+        country: "IT",
+        taxRegime: "FORFETTARIO" as never,
+        senderType: "LIBERO_PROFESSIONISTA" as never,
+        userKey: { create: { argon2Salt: "", wPwd: "", wSys } },
+      },
+    });
+    await prisma.client.create({
+      data: { userId: user.id, nameEnc, nameIv, type: "ITALY" as never },
+    });
+
+    const l = await loginJson("legacy@test.local", PASSWORD);
+    expect(l.status).toBe(200);
+
+    // Lettura legacy via API (usa la DEK di sessione o il fallback W_sys).
+    const res = await api("GET", "/api/clients", { jar: l.jar });
+    expect(res.status).toBe(200);
+    expect(res.text).toContain("Cliente Legacy");
+
+    // Self-heal: W_pwd riallineato alla password corrente.
+    const uk = await prisma.userKey.findUnique({ where: { userId: user.id } });
+    expect(uk?.wPwd && uk.wPwd.length > 0).toBe(true);
+    expect(uk?.argon2Salt && uk.argon2Salt.length > 0).toBe(true);
+  });
+
+  test("ZK reset HTTP: confirmPassword obbligatorio e reset completato", async () => {
+    const { createHash, randomBytes } = await import("crypto");
+    const { generateUserKey, wrapDekForZKSecret } = await import("@/lib/crypto");
+
+    const NEW = "NewPassword456";
+    const secret = randomBytes(32).toString("base64url");
+    const { dek, wPwd, argon2Salt } = await generateUserKey("OldPassword123");
+    const { wSys, zkSalt } = await wrapDekForZKSecret(dek, secret);
+
+    const u = await prisma.user.create({
+      data: {
+        email: "zkreset@test.local",
+        name: "ZK Reset",
+        passwordHash: PASSWORD_HASH,
+        role: "USER" as never,
+        businessName: "Test",
+        vatNumber: "00743110157",
+        taxCode: "ZRZLDA82M09D969K",
+        address: "x",
+        city: "x",
+        zipCode: "00000",
+        country: "IT",
+        zeroKnowledgeEnabled: true,
+        userKey: {
+          create: {
+            argon2Salt: argon2Salt.toString("base64"),
+            wPwd,
+            wSys,
+            zeroKnowledgeMode: true,
+            zkSalt: zkSalt.toString("base64"),
+          },
+        },
+      },
+    });
+
+    const token = randomBytes(32).toString("hex");
+    await prisma.authToken.create({
+      data: {
+        userId: u.id,
+        type: "password_reset",
+        tokenHash: createHash("sha256").update(token).digest("hex"),
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      },
+    });
+
+    // Senza confirmPassword -> 400 (il form inviava questo payload, bug corretto).
+    const bad = await api("POST", "/api/auth/zk-password-reset", {
+      body: { token, zkSecret: secret, newPassword: NEW },
+    });
+    expect(bad.status).toBe(400);
+
+    // Con confirmPassword -> 200 e login con la nuova password.
+    const ok = await api("POST", "/api/auth/zk-password-reset", {
+      body: { token, zkSecret: secret, newPassword: NEW, confirmPassword: NEW },
+    });
+    expect(ok.status).toBe(200);
+
+    const l = await loginJson("zkreset@test.local", NEW);
+    expect(l.status).toBe(200);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Zero-Knowledge: autorizzazione per-utente e attivazione/rotazione a due fasi.
+  // ---------------------------------------------------------------------------
+  describe("zero-knowledge: autorizzazione e flussi a due fasi", () => {
+    let jarA: Jar;
+    let jarB: Jar;
+    let pendingA = "";
+
+    const ZK = (action: string) => `/api/auth/zero-knowledge/${action}`;
+    const statusOf = async (jar: Jar) => {
+      const r = await api("GET", ZK("status"), { jar });
+      return (r.json as { enabled: boolean }).enabled;
+    };
+    const userKeyOf = (id: string) =>
+      prisma.userKey.findUnique({ where: { userId: id }, select: { wSys: true, zkSalt: true } });
+
+    beforeAll(async () => {
+      const la = await loginJson("a@test.local", PASSWORD);
+      expect(la.status).toBe(200);
+      jarA = la.jar;
+      const lb = await loginJson("b@test.local", PASSWORD);
+      expect(lb.status).toBe(200);
+      jarB = lb.jar;
+    });
+
+    test("prepare genera la chiave ma NON attiva (status resta disabled)", async () => {
+      expect(await statusOf(jarA)).toBe(false);
+      const before = await userKeyOf(userA.id);
+
+      const r = await api("POST", ZK("enable"), { jar: jarA, body: { action: "prepare" } });
+      expect(r.status).toBe(200);
+      const data = r.json as { recoveryKey: string; pendingToken: string };
+      expect(typeof data.recoveryKey).toBe("string");
+      expect(data.recoveryKey.length).toBeGreaterThanOrEqual(43);
+      expect(typeof data.pendingToken).toBe("string");
+      pendingA = data.pendingToken;
+
+      expect(await statusOf(jarA)).toBe(false);
+      const stored = await prisma.user.findUnique({
+        where: { id: userA.id },
+        select: { zeroKnowledgeEnabled: true, userKey: { select: { zeroKnowledgeMode: true } } },
+      });
+      expect(stored?.zeroKnowledgeEnabled).toBe(false);
+      expect(stored?.userKey?.zeroKnowledgeMode).toBe(false);
+      const after = await userKeyOf(userA.id);
+      expect(after?.wSys).toBe(before?.wSys);
+      expect(after?.zkSalt).toBe(before?.zkSalt);
+    });
+
+    test("il pendingToken di A è rifiutato su B (e se manomesso)", async () => {
+      // B tenta di committare l'attivazione con il token preparato per A.
+      const cross = await api("POST", ZK("enable"), {
+        jar: jarB,
+        body: { action: "confirm", pendingToken: pendingA, confirmDisclaimer: true },
+      });
+      expect(cross.status).toBe(400);
+      expect(await statusOf(jarB)).toBe(false);
+
+      // Token manomesso -> firma non valida.
+      const tampered = pendingA.slice(0, -3) + "xyz";
+      const bad = await api("POST", ZK("enable"), {
+        jar: jarA,
+        body: { action: "confirm", pendingToken: tampered, confirmDisclaimer: true },
+      });
+      expect(bad.status).toBe(400);
+      expect(await statusOf(jarA)).toBe(false);
+    });
+
+    test("confirm SENZA disclaimer viene rifiutato", async () => {
+      const r = await api("POST", ZK("enable"), {
+        jar: jarA,
+        body: { action: "confirm", pendingToken: pendingA, confirmDisclaimer: false },
+      });
+      expect(r.status).toBe(400);
+      expect(await statusOf(jarA)).toBe(false);
+    });
+
+    test("confirm committa l'attivazione senza incrementare sessionVersion", async () => {
+      const before = await prisma.user.findUnique({
+        where: { id: userA.id },
+        select: { sessionVersion: true },
+      });
+      const r = await api("POST", ZK("enable"), {
+        jar: jarA,
+        body: { action: "confirm", pendingToken: pendingA, confirmDisclaimer: true },
+      });
+      expect(r.status).toBe(200);
+      expect(await statusOf(jarA)).toBe(true);
+
+      const after = await prisma.user.findUnique({
+        where: { id: userA.id },
+        select: { zeroKnowledgeEnabled: true, sessionVersion: true, userKey: { select: { zeroKnowledgeMode: true } } },
+      });
+      expect(after?.zeroKnowledgeEnabled).toBe(true);
+      expect(after?.userKey?.zeroKnowledgeMode).toBe(true);
+      expect(after?.sessionVersion).toBe(before?.sessionVersion);
+
+      // Replay dello stesso token: utente già ZK -> 409, nessun secondo commit.
+      const replay = await api("POST", ZK("enable"), {
+        jar: jarA,
+        body: { action: "confirm", pendingToken: pendingA, confirmDisclaimer: true },
+      });
+      expect(replay.status).toBe(409);
+    });
+
+    test("rotazione: prepare con password errata -> 401 e nessuna modifica", async () => {
+      const before = await userKeyOf(userA.id);
+      const r = await api("POST", ZK("rotate-secret"), {
+        jar: jarA,
+        body: { action: "prepare", password: "WrongPassword123" },
+      });
+      expect(r.status).toBe(401);
+      const after = await userKeyOf(userA.id);
+      expect(after?.wSys).toBe(before?.wSys);
+      expect(after?.zkSalt).toBe(before?.zkSalt);
+    });
+
+    test("rotazione two-phase: commit solo al confirm, token altrui rifiutato", async () => {
+      const before = await userKeyOf(userA.id);
+      const prep = await api("POST", ZK("rotate-secret"), {
+        jar: jarA,
+        body: { action: "prepare", password: PASSWORD },
+      });
+      expect(prep.status).toBe(200);
+      const { newRecoveryKey, pendingToken } = prep.json as {
+        newRecoveryKey: string;
+        pendingToken: string;
+      };
+      expect(newRecoveryKey.length).toBeGreaterThanOrEqual(43);
+
+      // Ancora nessun commit: la vecchia chiave resta quella valida.
+      const mid = await userKeyOf(userA.id);
+      expect(mid?.wSys).toBe(before?.wSys);
+      expect(mid?.zkSalt).toBe(before?.zkSalt);
+
+      // B non può committare la rotazione di A (409: B non è ZK).
+      const cross = await api("POST", ZK("rotate-secret"), {
+        jar: jarB,
+        body: { action: "confirm", pendingToken },
+      });
+      expect([400, 409]).toContain(cross.status);
+      expect((await userKeyOf(userA.id))?.wSys).toBe(before?.wSys);
+
+      // Commit legittimo.
+      const conf = await api("POST", ZK("rotate-secret"), {
+        jar: jarA,
+        body: { action: "confirm", pendingToken },
+      });
+      expect(conf.status).toBe(200);
+      const after = await userKeyOf(userA.id);
+      expect(after?.wSys).not.toBe(before?.wSys);
+      expect(after?.zkSalt).not.toBe(before?.zkSalt);
+
+      // Replay del token di rotazione: già committato... il token è ancora
+      // valido finché non scade, ma riapplicarlo non deve corrompere nulla.
+      const again = await api("POST", ZK("rotate-secret"), {
+        jar: jarA,
+        body: { action: "confirm", pendingToken },
+      });
+      expect(again.status).toBe(200);
+      const end = await userKeyOf(userA.id);
+      expect(end?.wSys).toBe(after?.wSys);
+    });
+
+    test("la rotazione della chiave NON invalida un token di reset pendente", async () => {
+      const { createHash } = await import("crypto");
+
+      // Token di reset pendente creato direttamente sul DB di test.
+      const token = "a".repeat(63) + "b";
+      const tokenHash = createHash("sha256").update(token).digest("hex");
+      await prisma.authToken.create({
+        data: {
+          userId: userA.id,
+          type: "password_reset",
+          tokenHash,
+          expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+        },
+      });
+
+      const prep = await api("POST", ZK("rotate-secret"), {
+        jar: jarA,
+        body: { action: "prepare", password: PASSWORD },
+      });
+      expect(prep.status).toBe(200);
+      const { pendingToken } = prep.json as { pendingToken: string };
+      const conf = await api("POST", ZK("rotate-secret"), {
+        jar: jarA,
+        body: { action: "confirm", pendingToken },
+      });
+      expect(conf.status).toBe(200);
+
+      // Il token di reset deve essere ancora presente e non usato.
+      const still = await prisma.authToken.findUnique({ where: { tokenHash } });
+      expect(still).not.toBeNull();
+      expect(still?.usedAt).toBeNull();
+    });
+
+    test("disattivazione: password obbligatoria, B bloccato, A completa", async () => {
+      let r = await api("POST", ZK("disable"), {
+        jar: jarA,
+        body: { password: "WrongPassword123" },
+      });
+      expect(r.status).toBe(401);
+      expect(await statusOf(jarA)).toBe(true);
+
+      // B non è ZK: non può disattivare l'account di A.
+      r = await api("POST", ZK("disable"), { jar: jarB, body: { password: PASSWORD } });
+      expect(r.status).toBe(409);
+      expect(await statusOf(jarA)).toBe(true);
+
+      r = await api("POST", ZK("disable"), { jar: jarA, body: { password: PASSWORD } });
+      expect(r.status).toBe(200);
+      expect(await statusOf(jarA)).toBe(false);
+    });
   });
 });

@@ -32,6 +32,8 @@ interface User {
   country: string;
   taxRegime: 'FORFETTARIO' | 'ORDINARIO';
   senderType: SenderType;
+  totpEnabled: boolean;
+  zeroKnowledgeEnabled: boolean;
   createdAt: string;
   _count: {
     clients: number;
@@ -382,10 +384,26 @@ export function UserManagement({ onRefresh }: UserManagementProps) {
                     <Button type="button" variant="outline" onClick={() => sendResetEmail('password')}>
                       Invia email reset password
                     </Button>
-                    <Button type="button" variant="outline" onClick={() => sendResetEmail('mfa')}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => sendResetEmail('mfa')}
+                      disabled={!editingUser.totpEnabled}
+                      title={
+                        editingUser.totpEnabled
+                          ? undefined
+                          : 'La verifica in due passaggi non è attiva su questo account'
+                      }
+                    >
                       Invia email reset 2FA
                     </Button>
                   </div>
+                  {!editingUser.totpEnabled && (
+                    <p className="text-xs text-muted-foreground">
+                      Il reset 2FA è disponibile solo se l&apos;utente ha attivato la verifica in due
+                      passaggi.
+                    </p>
+                  )}
                 </div>
               ) : (
                 <div className="border-t pt-4">

@@ -66,6 +66,8 @@ export async function GET() {
         country: true,
         taxRegime: true,
         senderType: true,
+        totpEnabled: true,
+        zeroKnowledgeEnabled: true,
         createdAt: true,
         _count: {
           select: { clients: true, invoices: true },
@@ -116,10 +118,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const passwordHash =
-      userCount === 0
-        ? await hashPassword(data.password as string)
-        : await hashPassword(randomBytes(32).toString('hex')); // account bloccato
+    // Password in chiaro temporanea: bootstrap = scelta dall'utente, inviti = casuale
+    // (account bloccato finché l'utente non la imposta via email; il re-wrap via W_sys
+    // avviene al completamento del setup).
+    const initialPassword =
+      userCount === 0 ? (data.password as string) : randomBytes(32).toString('hex');
+    const passwordHash = await hashPassword(initialPassword);
+    // Genera la DEK utente avvolta due volte (W_pwd con password iniziale, W_sys con master key).
+    const { generateUserKey } = await import('@/lib/crypto');
+    const { wPwd, wSys, argon2Salt } = await generateUserKey(initialPassword);
 
     const role = userCount === 0 ? 'ADMIN' : 'USER';
 
@@ -139,6 +146,13 @@ export async function POST(request: NextRequest) {
         country: data.country,
         taxRegime: data.taxRegime,
         senderType: data.senderType,
+        userKey: {
+          create: {
+            argon2Salt: argon2Salt.toString('base64'),
+            wPwd,
+            wSys,
+          },
+        },
       },
       select: {
         id: true,

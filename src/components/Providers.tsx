@@ -7,16 +7,7 @@ import { ReactNode } from "react";
 export function Providers({ children }: { children: ReactNode }) {
   return (
     <SessionProvider>
-      <ThemeProvider
-        attribute="class"
-        defaultTheme="system"
-        enableSystem
-        themes={["mezzanotte", "aurora", "tramonto", "dark", "light"]}
-        storageKey="solo-theme"
-        disableTransitionOnChange
-      >
-        {children}
-      </ThemeProvider>
+      <ThemeProvider>{children}</ThemeProvider>
     </SessionProvider>
   );
 }

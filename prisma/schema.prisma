@@ -1,6 +1,10 @@
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  // DATABASE_URL: connessione runtime (su Neon: endpoint pooled, adatto a serverless).
+  url       = env("DATABASE_URL")
+  // DIRECT_URL: connessione diretta (senza pooler) usata solo da Prisma Migrate.
+  // In locale può coincidere con DATABASE_URL.
+  directUrl = env("DIRECT_URL")
 }
 
 generator client {
@@ -61,6 +65,13 @@ model User {
   totpEnabled      Boolean  @default(false)
   totpBackupCodes  String[] @default([])
 
+  // Zero-Knowledge Mode: se true, recovery solo via chiave utente (nessun fallback server)
+  zeroKnowledgeEnabled      Boolean   @default(false)
+  zeroKnowledgeActivatedAt  DateTime?
+
+  // Doppio involucro per DEK utente (cifratura application-level).
+  userKey          UserKey?
+
   clients       Client[]
   payments      Payment[]
   invoices      Invoice[]
@@ -70,6 +81,39 @@ model User {
 
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
+}
+
+// Chiave di cifratura per utente (doppio involucro).
+// W_pwd = DEK cifrata con chiave derivata da password utente (Argon2id).
+// W_sys = DEK cifrata con Master Key di sistema (AES-256-GCM, chiave da env).
+// DEK (Data Encryption Key) = chiave simmetrica AES-256 per cifrare i dati dell'utente.
+model UserKey {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Salt per Argon2id (derivazione chiave da password).
+  argon2Salt  String   // base64, 16 byte
+  
+  // W_pwd: DEK cifrata con chiave derivata da password (Argon2id -> AES-GCM).
+  // Formato: base64(IV || ciphertext || authTag) — IV 12 byte, tag 16 byte.
+  wPwd      String   // wrapped DEK with password-derived key
+  
+  // W_sys: DEK cifrata con Master Key di sistema (AES-GCM).
+  // Formato: base64(IV || ciphertext || authTag).
+  // In modalità Zero-Knowledge: DEK cifrata con chiave derivata da secret utente.
+  wSys      String   // wrapped DEK with system master key (o ZK secret)
+  
+  // Zero-Knowledge Mode: se true, wSys contiene DEK avvolta con chiave utente
+  zeroKnowledgeMode Boolean @default(false)
+  // Salt per derivazione chiave ZK (base64, 16 byte)
+  zkSalt      String?
+  
+  // Versione dello schema di cifratura (per future rotazioni/algoritmi).
+  version   Int      @default(1)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // Token monouso per setup account e reset password/2FA via email.
@@ -126,15 +170,26 @@ model Client {
   id          String      @id @default(cuid())
   userId      String
   user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name        String
-  type        ClientType  @default(EXTRA_EU)
-  vatNumber   String?
-  taxCode     String?
-  sdiCode     String?     @default("XXXXXXX")
-  address     String?
-  city        String?
-  zipCode     String?     @default("00000")
-  country     String      @default("US")
+  
+  // Campi sensibili cifrati: ciphertext (base64) + IV (base64) separati.
+  // name, vatNumber, taxCode, sdiCode, address, city, zipCode, country
+  nameEnc        String
+  nameIv         String
+  type           ClientType  @default(EXTRA_EU)  // non sensibile, in chiaro
+  vatNumberEnc   String?
+  vatNumberIv    String?
+  taxCodeEnc     String?
+  taxCodeIv      String?
+  sdiCodeEnc     String?
+  sdiCodeIv      String?
+  addressEnc     String?
+  addressIv      String?
+  cityEnc        String?
+  cityIv         String?
+  zipCodeEnc     String?
+  zipCodeIv      String?
+  countryEnc     String?
+  countryIv      String?
   
   payments    Payment[]
   invoices    Invoice[]
@@ -151,14 +206,22 @@ model Payment {
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   clientId    String
   client      Client    @relation(fields: [clientId], references: [id])
-  amount           Decimal   @db.Decimal(10, 2)
-  currency         String    @default("EUR")
-  originalAmount   Decimal?  @db.Decimal(10, 2)
-  originalCurrency String?
-  paidAt           DateTime
-  description      String
-  invoiceId        String?
-  invoice          Invoice?  @relation(fields: [invoiceId], references: [id])
+  
+  // Campi sensibili cifrati
+  amountEnc           String
+  amountIv            String
+  currencyEnc         String
+  currencyIv          String
+  originalAmountEnc   String?
+  originalAmountIv    String?
+  originalCurrencyEnc String?
+  originalCurrencyIv  String?
+  paidAtEnc           String
+  paidAtIv            String
+  descriptionEnc      String
+  descriptionIv       String
+  invoiceId           String?
+  invoice             Invoice?  @relation(fields: [invoiceId], references: [id])
   
   createdAt   DateTime  @default(now())
 
@@ -169,18 +232,27 @@ model Invoice {
   id                String        @id @default(cuid())
   userId            String
   user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Campi non sensibili (serve per query/ordinamento)
   number            Int
   year              Int
-  date              DateTime
+  dateEnc           String
+  dateIv            String
   clientId          String
   client            Client        @relation(fields: [clientId], references: [id])
   payments          Payment[]
   items             InvoiceItem[]
-  subtotalAmount    Decimal       @db.Decimal(10, 2)
-  stampDutyAmount   Decimal       @default(0.00) @db.Decimal(10, 2)
-  totalAmount       Decimal       @db.Decimal(10, 2)
-  notes             String?
-  status            InvoiceStatus @default(ISSUED)
+  
+  // Campi sensibili cifrati
+  subtotalAmountEnc    String
+  subtotalAmountIv     String
+  stampDutyAmountEnc   String
+  stampDutyAmountIv    String
+  totalAmountEnc       String
+  totalAmountIv        String
+  notesEnc             String?
+  notesIv              String?
+  status               InvoiceStatus @default(ISSUED)  // non sensibile
   
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
@@ -193,6 +265,10 @@ model InvoiceItem {
   id          String   @id @default(cuid())
   invoiceId   String
   invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  description String
-  amount      Decimal  @db.Decimal(10, 2)
+  
+  // Campi sensibili cifrati
+  descriptionEnc String
+  descriptionIv  String
+  amountEnc      String
+  amountIv       String
 }

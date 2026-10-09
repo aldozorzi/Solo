@@ -13,7 +13,7 @@ import { Table, TableHeader, TableRow, TableCell, TableBody } from '@/components
 import { Checkbox } from '@/components/ui/checkbox';
 import { format } from 'date-fns';
 import { Plus, Trash2, AlertTriangle } from 'lucide-react';
-import { PaymentWithRelations, Client, InvoiceWithRelations, InvoiceStatus, INVOICE_STATUS_LABELS } from '@/types';
+import { PaymentWithRelations, DecryptedClient, InvoiceWithRelations, InvoiceStatus, INVOICE_STATUS_LABELS } from '@/types';
 import { formatDualAmountShort } from '@/lib/tax';
 
 const invoiceItemSchema = z.object({
@@ -33,7 +33,7 @@ type InvoiceEditFormData = z.infer<typeof invoiceEditSchema>;
 
 interface InvoiceEditFormProps {
   invoice: InvoiceWithRelations;
-  clients: Client[];
+  clients: DecryptedClient[];
   pendingPayments: PaymentWithRelations[];
   onSuccess: () => void;
 }

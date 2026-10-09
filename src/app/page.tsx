@@ -1,9 +1,10 @@
 import { getServerSession } from "next-auth";
-import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import HomeDashboard from "@/components/HomeDashboard";
 import type { UserSession } from "@/types";
+import { getUserDek, decryptClient, decryptPayment, decryptInvoice } from "@/lib/data-encryption";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
@@ -15,10 +16,16 @@ export default async function Home() {
   }
 
   const userId = (session.user as UserSession).id;
+  const dek = await getUserDek(userId).catch(() => null);
+  if (!dek) {
+    // Sessione presente ma DEK non disponibile (es. cookie scaduto in modalità
+    // Zero-Knowledge): forziamo un nuovo login invece di crashare.
+    redirect("/login?error=SessionExpired");
+  }
   const revenueYear = new Date().getFullYear();
   const revenueStart = new Date(Date.UTC(revenueYear, 0, 1));
   const revenueEnd = new Date(Date.UTC(revenueYear + 1, 0, 1));
-  const [profile, pendingPayments, pendingStats, paymentCount, draftStats, invoiceCount, annualInvoices, clients] =
+  const [profile, pendingStored, paymentCount, draftStored, invoiceCount, issuedPaidStored, clientsStored] =
     await Promise.all([
       prisma.user.findUnique({
         where: { id: userId },
@@ -32,31 +39,21 @@ export default async function Home() {
       prisma.payment.findMany({
         where: { userId, invoiceId: null },
         include: { client: true },
-        orderBy: { paidAt: "desc" },
-      }),
-      prisma.payment.aggregate({
-        where: { userId, invoiceId: null },
-        _count: { id: true },
-        _sum: { amount: true },
+        // paidAt è cifrato: ordinamento su createdAt (plaintext).
+        orderBy: { createdAt: "desc" },
       }),
       prisma.payment.count({ where: { userId } }),
-      prisma.invoice.aggregate({
+      prisma.invoice.findMany({
         where: { userId, status: "DRAFT" },
-        _count: { id: true },
-        _sum: { subtotalAmount: true },
       }),
       prisma.invoice.count({ where: { userId } }),
+      // Filtro data in JS: date è cifrata, non interrogabile in SQL.
       prisma.invoice.findMany({
-        where: {
-          userId,
-          status: { in: ["ISSUED", "PAID"] },
-          date: { gte: revenueStart, lt: revenueEnd },
-        },
-        select: { date: true, totalAmount: true },
+        where: { userId, status: { in: ["ISSUED", "PAID"] } },
       }),
       prisma.client.findMany({
         where: { userId },
-        orderBy: { name: "asc" },
+        // name è cifrato: ordinamento in JS dopo la decifratura.
       }),
     ]);
 
@@ -64,20 +61,41 @@ export default async function Home() {
     redirect("/login");
   }
 
-  const serializedPendingPayments = pendingPayments.map((payment) => ({
+  // Decifratura + aggregati in JS (i campi sensibili non sono aggregabili in SQL).
+  const pendingDecrypted = await Promise.all(
+    pendingStored.map(async (p) => {
+      const payment = await decryptPayment(p, dek);
+      payment.client = await decryptClient(p.client, dek);
+      return payment;
+    })
+  );
+  const pendingTotal = Math.round(pendingDecrypted.reduce((s, p) => s + p.amount, 0) * 100) / 100;
+
+  const draftDecrypted = await Promise.all(draftStored.map((i) => decryptInvoice(i, dek)));
+  const draftsTotal =
+    Math.round(draftDecrypted.reduce((s, i) => s + i.subtotalAmount, 0) * 100) / 100;
+
+  const annualDecrypted = await Promise.all(issuedPaidStored.map((i) => decryptInvoice(i, dek)));
+  const annualInvoices = annualDecrypted.filter((i) => i.date >= revenueStart && i.date < revenueEnd);
+
+  const clientsDecrypted = await Promise.all(clientsStored.map((c) => decryptClient(c, dek)));
+  clientsDecrypted.sort((a, b) => a.name.localeCompare(b.name, "it"));
+
+  const serializedPendingPayments = pendingDecrypted.map((payment) => ({
     id: payment.id,
     clientId: payment.clientId,
     description: payment.description,
-    amount: Number(payment.amount),
+    amount: payment.amount,
     paidAt: payment.paidAt.toISOString(),
-    client: payment.client,
+    // Sempre valorizzato: il client è incluso nella query e decifrato sopra.
+    client: payment.client!,
   }));
 
   const monthLabels = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"];
   const monthlyRevenue = monthLabels.map((label, month) => ({ month, label, total: 0, count: 0 }));
   let annualRevenueTotal = 0;
   for (const invoice of annualInvoices) {
-    const amount = Number(invoice.totalAmount);
+    const amount = invoice.totalAmount;
     const month = new Date(invoice.date).getUTCMonth();
     monthlyRevenue[month].total = Math.round((monthlyRevenue[month].total + amount) * 100) / 100;
     monthlyRevenue[month].count += 1;
@@ -95,17 +113,17 @@ export default async function Home() {
             role: profile.role,
             taxRegimeLabel: profile.taxRegime,
             paymentCount,
-            pendingCount: pendingStats._count.id,
-            pendingTotal: Number(pendingStats._sum.amount ?? 0),
+            pendingCount: pendingDecrypted.length,
+            pendingTotal,
             invoiceCount,
-            draftsCount: draftStats._count.id,
-            draftsTotal: Number(draftStats._sum.subtotalAmount ?? 0),
+            draftsCount: draftDecrypted.length,
+            draftsTotal,
             revenueYear,
             annualRevenueTotal,
             annualRevenueCount: annualInvoices.length,
             monthlyRevenue,
           }}
-          clients={clients}
+          clients={clientsDecrypted}
           pendingPayments={serializedPendingPayments}
         />
       </div>

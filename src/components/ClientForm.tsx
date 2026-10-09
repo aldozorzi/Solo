@@ -37,7 +37,7 @@ interface ClientFormProps {
     address: string | null;
     city: string | null;
     zipCode: string | null;
-    country: string;
+    country: string | null;
   } | null;
   onSuccess: () => void;
 }

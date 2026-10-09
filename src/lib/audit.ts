@@ -24,6 +24,10 @@ export type AuditEventType =
   | "auth.password_reset_requested"
   | "auth.password_reset_completed"
   | "auth.mfa_reset_completed"
+  | "auth.zk_enabled"
+  | "auth.zk_disabled"
+  | "auth.zk_secret_rotated"
+  | "auth.zk_password_reset"
   | "invoice.created"
   | "invoice.exported"
   | "invoice.deleted";

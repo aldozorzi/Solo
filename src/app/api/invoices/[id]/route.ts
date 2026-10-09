@@ -8,6 +8,8 @@ import { generateFatturaPAXml, userToSdiConfig, generateFileName, invoiceProgres
 import { generateInvoicePdfBuffer, userToSenderInfo } from '@/lib/pdf-generator';
 import { authOptions } from '@/lib/auth';
 import { auditEvent } from '@/lib/audit';
+import { getUserDek, decryptInvoice, decryptClient, decryptPayment, decryptInvoiceItem, encryptInvoiceItemInput } from '@/lib/data-encryption';
+import { encryptField } from '@/lib/crypto';
 
 const dateInputSchema = z.string().min(1, 'Data obbligatoria').refine(
   (v) => !Number.isNaN(Date.parse(v)),
@@ -83,8 +85,23 @@ export async function GET(
     const { searchParams } = new URL(request.url);
     const format = searchParams.get('format') || 'json';
 
-    const invoice = await verifyInvoiceOwnership(userId, id);
+    const dek = await getUserDek(userId);
+    const stored = await verifyInvoiceOwnership(userId, id);
     const user = await getUserWithTaxRegime(userId);
+
+    // Decifra fattura + relazioni per l'uso in chiaro (totali, XML, PDF).
+    const invoice = await decryptInvoice(stored, dek);
+    invoice.client = await decryptClient(stored.client, dek);
+    invoice.items = await Promise.all(stored.items.map((i) => decryptInvoiceItem(i, dek)));
+    invoice.payments = await Promise.all(stored.payments.map((p) => decryptPayment(p, dek)));
+
+    // I generatori accettano direttamente le forme decifrate (stessi nomi di campo).
+    const invoiceForExport = {
+      ...invoice,
+      client: invoice.client!,
+      items: invoice.items ?? [],
+      payments: invoice.payments ?? [],
+    };
 
     const totals = calculateInvoiceTotals({
       subtotal: Number(invoice.subtotalAmount),
@@ -93,9 +110,9 @@ export async function GET(
       senderType: user.senderType,
     });
 
-    const sdiConfig = userToSdiConfig(user as any);
-    sdiConfig.progressivoInvio = invoiceProgressivo(invoice);
-    const senderInfo = userToSenderInfo(user as any);
+    const sdiConfig = userToSdiConfig(user);
+    sdiConfig.progressivoInvio = invoiceProgressivo(invoiceForExport);
+    const senderInfo = userToSenderInfo(user);
 
     if (format === 'xml') {
       // Transizione di stato all'esportazione XML: totalmente pagata -> PAID, altrimenti ISSUED.
@@ -114,12 +131,12 @@ export async function GET(
       }
 
       const xml = generateFatturaPAXml({
-        invoice,
+        invoice: invoiceForExport,
         totals,
         config: sdiConfig,
       });
 
-      const fileName = generateFileName(invoice, sdiConfig);
+      const fileName = generateFileName(invoiceForExport, sdiConfig);
 
       auditEvent({ type: 'invoice.exported', actor: userId, target: id, details: { format: 'xml' } });
 
@@ -146,7 +163,7 @@ export async function GET(
         totalAmount: Math.round((liveSubtotal + liveVat) * 100) / 100,
       };
       const buffer = await generateInvoicePdfBuffer({
-        invoice,
+        invoice: invoiceForExport,
         totals: pdfTotals,
         sender: senderInfo,
       });
@@ -179,6 +196,7 @@ export async function PUT(
     const userId = await getUserId();
     const { id } = await params;
 
+    const dek = await getUserDek(userId);
     const existing = await verifyInvoiceOwnership(userId, id);
 
     const body = await request.json();
@@ -224,10 +242,13 @@ export async function PUT(
 
     const user = await getUserWithTaxRegime(userId);
 
-    const effectiveItems = data.items ?? existing.items.map((it) => ({
-      description: it.description,
-      amount: Number(it.amount),
-    }));
+    const existingItems = await Promise.all(
+      existing.items.map(async (it) => {
+        const dec = await decryptInvoiceItem(it, dek);
+        return { description: dec.description, amount: dec.amount };
+      })
+    );
+    const effectiveItems = data.items ?? existingItems;
     const subtotal = effectiveItems.reduce((sum, item) => sum + item.amount, 0);
     const totals = calculateInvoiceTotals({
       subtotal,
@@ -236,24 +257,32 @@ export async function PUT(
       senderType: user.senderType,
     });
 
-    const invoice = await prisma.invoice.update({
+    const encDate = data.date !== undefined
+      ? encryptField(new Date(data.date).toISOString(), dek) : null;
+    const encSubtotal = encryptField(String(totals.subtotal), dek);
+    const encStamp = encryptField(String(totals.stampDutyAmount), dek);
+    const encTotal = encryptField(String(totals.totalAmount), dek);
+    const encNotes = totals.legalNotes ? encryptField(totals.legalNotes, dek) : null;
+
+    const stored = await prisma.invoice.update({
       where: { id },
       data: {
-        ...(data.date !== undefined ? { date: new Date(data.date) } : {}),
+        ...(encDate ? { dateEnc: encDate.ciphertext, dateIv: encDate.iv } : {}),
         clientId: effectiveClientId,
         ...(data.status !== undefined ? { status: data.status } : {}),
-        subtotalAmount: totals.subtotal,
-        stampDutyAmount: totals.stampDutyAmount,
-        totalAmount: totals.totalAmount,
-        notes: totals.legalNotes,
+        subtotalAmountEnc: encSubtotal.ciphertext,
+        subtotalAmountIv: encSubtotal.iv,
+        stampDutyAmountEnc: encStamp.ciphertext,
+        stampDutyAmountIv: encStamp.iv,
+        totalAmountEnc: encTotal.ciphertext,
+        totalAmountIv: encTotal.iv,
+        notesEnc: encNotes?.ciphertext ?? null,
+        notesIv: encNotes?.iv ?? null,
         ...(data.items !== undefined
           ? {
               items: {
                 deleteMany: {},
-                create: data.items.map((item) => ({
-                  description: item.description,
-                  amount: item.amount,
-                })),
+                create: data.items.map((item) => encryptInvoiceItemInput(item, dek)),
               },
             }
           : {}),
@@ -265,6 +294,11 @@ export async function PUT(
         payments: true,
       },
     });
+
+    const invoice = await decryptInvoice(stored, dek);
+    invoice.client = await decryptClient(stored.client, dek);
+    invoice.items = await Promise.all(stored.items.map((i) => decryptInvoiceItem(i, dek)));
+    invoice.payments = await Promise.all(stored.payments.map((p) => decryptPayment(p, dek)));
 
     return NextResponse.json(invoice);
   } catch (error) {

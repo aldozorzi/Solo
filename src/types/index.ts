@@ -12,25 +12,35 @@ import {
 } from '@prisma/client';
 
 export type { Client, Invoice, InvoiceItem, Payment, User, ClientType, InvoiceStatus, TaxRegime, UserRole, SenderType };
+export type { DecryptedClient, DecryptedInvoice, DecryptedInvoiceItem, DecryptedPayment };
 
-export type InvoiceWithRelations = Invoice & {
-  client: Client;
-  items: InvoiceItem[];
-  payments: Payment[];
+// Forme "in chiaro" restituite dalle API (campi sensibili decifrati con gli stessi
+// nomi legacy: il frontend non distingue tra plaintext DB e ciphertext decifrato).
+import type {
+  DecryptedClient,
+  DecryptedInvoice,
+  DecryptedInvoiceItem,
+  DecryptedPayment,
+} from '@/lib/data-encryption';
+
+export type InvoiceWithRelations = DecryptedInvoice & {
+  client: DecryptedClient;
+  items: DecryptedInvoiceItem[];
+  payments: DecryptedPayment[];
 };
 
-export type ClientWithRelations = Client & {
-  payments: Payment[];
-  invoices: Invoice[];
+export type ClientWithRelations = DecryptedClient & {
+  payments: DecryptedPayment[];
+  invoices: DecryptedInvoice[];
   _count?: {
     payments: number;
     invoices: number;
   };
 };
 
-export type PaymentWithRelations = Payment & {
-  client: Client;
-  invoice?: Invoice | null;
+export type PaymentWithRelations = DecryptedPayment & {
+  client: DecryptedClient;
+  invoice?: DecryptedInvoice | null;
 };
 
 export type UserSession = {

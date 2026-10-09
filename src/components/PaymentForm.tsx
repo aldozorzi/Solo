@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { format } from 'date-fns';
-import { Client, PaymentWithRelations } from '@/types';
+import { DecryptedClient, PaymentWithRelations } from '@/types';
 
 const paymentSchema = z.object({
   clientId: z.string().min(1, 'Cliente obbligatorio'),
@@ -26,7 +26,7 @@ const paymentSchema = z.object({
 type PaymentFormData = z.infer<typeof paymentSchema>;
 
 interface PaymentFormProps {
-  clients: Client[];
+  clients: DecryptedClient[];
   defaultClientId?: string;
   payment?: PaymentWithRelations | null;
   onSuccess: () => void;

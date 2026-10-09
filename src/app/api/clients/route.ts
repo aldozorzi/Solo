@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { prisma } from '@/lib/prisma';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
+import { getUserDek, decryptClient, encryptClientInput } from '@/lib/data-encryption';
 
 const clientSchema = z.object({
   name: z.string().min(1, 'Nome obbligatorio'),
@@ -27,6 +28,7 @@ async function getUserId(): Promise<string> {
 export async function GET() {
   try {
     const userId = await getUserId();
+    const dek = await getUserDek(userId);
     const clients = await prisma.client.findMany({
       where: { userId },
       include: {
@@ -34,9 +36,10 @@ export async function GET() {
           select: { payments: true, invoices: true },
         },
       },
-      orderBy: { name: 'asc' },
+      orderBy: { nameEnc: 'asc' },
     });
-    return NextResponse.json(clients);
+    const decrypted = await Promise.all(clients.map(c => decryptClient(c, dek)));
+    return NextResponse.json(decrypted);
   } catch (error) {
     if (error instanceof Error && error.message === 'Non autenticato') {
       return NextResponse.json({ error: error.message }, { status: 401 });
@@ -49,6 +52,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const userId = await getUserId();
+    const dek = await getUserDek(userId);
     const body = await request.json();
     const data = clientSchema.parse(body);
 
@@ -58,17 +62,22 @@ export async function POST(request: NextRequest) {
       EXTRA_EU: { sdiCode: 'XXXXXXX', zipCode: '00000' },
     }[data.type];
 
+    const encrypted = encryptClientInput({
+      ...data,
+      sdiCode: data.sdiCode || defaults.sdiCode,
+      zipCode: data.zipCode || defaults.zipCode,
+      country: data.country || (data.type === 'ITALY' ? 'IT' : 'US'),
+    }, dek);
+
     const client = await prisma.client.create({
       data: {
-        ...data,
+        ...encrypted,
         userId,
-        sdiCode: data.sdiCode || defaults.sdiCode,
-        zipCode: data.zipCode || defaults.zipCode,
-        country: data.country || (data.type === 'ITALY' ? 'IT' : 'US'),
       },
     });
 
-    return NextResponse.json(client, { status: 201 });
+    const decrypted = await decryptClient(client, dek);
+    return NextResponse.json(decrypted, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: error.issues }, { status: 400 });

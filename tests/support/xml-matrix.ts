@@ -565,6 +565,9 @@ export async function createMatrixUser(
   taxRegime: MatrixTaxRegime,
   runId: string
 ) {
+  const { generateUserKey } = await import('@/lib/crypto');
+  const { randomBytes } = await import('node:crypto');
+  const { wPwd, wSys, argon2Salt } = await generateUserKey(randomBytes(32).toString('hex'));
   return prisma.user.create({
     data: {
       email: `xml-matrix-${runId}-${senderType.toLowerCase()}-${taxRegime.toLowerCase()}@example.com`,
@@ -580,16 +583,26 @@ export async function createMatrixUser(
       province: 'TO',
       taxRegime: canonicalTaxRegime(taxRegime) as never,
       senderType: senderType as never,
+      userKey: {
+        create: {
+          argon2Salt: argon2Salt.toString('base64'),
+          wPwd,
+          wSys,
+          zeroKnowledgeMode: false,
+          zkSalt: null,
+        },
+      },
     },
   });
 }
 
 export async function createMatrixClient(prisma: PrismaClient, userId: string, client: ClientProfile) {
-  return prisma.client.create({
-    data: {
-      userId,
+  const { getUserDek, encryptClientInput } = await import('@/lib/data-encryption');
+  const dek = await getUserDek(userId, undefined, prisma);
+  const encrypted = encryptClientInput(
+    {
       name: client.name,
-      type: client.clientType as never,
+      type: client.clientType as 'ITALY' | 'EU' | 'EXTRA_EU',
       vatNumber: client.vatNumber,
       taxCode: client.taxCode,
       sdiCode: client.sdiCode,
@@ -598,7 +611,9 @@ export async function createMatrixClient(prisma: PrismaClient, userId: string, c
       zipCode: client.zipCode,
       country: client.country,
     },
-  });
+    dek
+  );
+  return prisma.client.create({ data: { userId, ...encrypted } });
 }
 
 export async function createMatrixPayments(
@@ -607,20 +622,20 @@ export async function createMatrixPayments(
   clientId: string,
   fixtures: PaymentFixture[]
 ) {
+  const { getUserDek, encryptPaymentInput } = await import('@/lib/data-encryption');
+  const dek = await getUserDek(userId, undefined, prisma);
   const rows = [];
   for (const fixture of fixtures) {
-    rows.push(
-      await prisma.payment.create({
-        data: {
-          userId,
-          clientId,
-          amount: fixture.amount,
-          currency: 'EUR',
-          paidAt: new Date(`${fixture.paidAt}T00:00:00.000Z`),
-          description: `XML Matrix ${fixture.amount}`,
-        },
-      })
+    const encrypted = encryptPaymentInput(
+      {
+        amount: fixture.amount,
+        currency: 'EUR',
+        paidAt: new Date(`${fixture.paidAt}T00:00:00.000Z`),
+        description: `XML Matrix ${fixture.amount}`,
+      },
+      dek
     );
+    rows.push(await prisma.payment.create({ data: { userId, clientId, ...encrypted } }));
   }
   return rows;
 }
@@ -633,9 +648,18 @@ export async function createMatrixInvoice(
   invoiceNumber: number,
   totals: InvoiceTotals
 ) {
-  return prisma.invoice.create({
-    data: {
-      userId,
+  const {
+    getUserDek,
+    encryptInvoiceInput,
+    encryptInvoiceItemInput,
+    decryptInvoice,
+    decryptClient,
+    decryptPayment,
+    decryptInvoiceItem,
+  } = await import('@/lib/data-encryption');
+  const dek = await getUserDek(userId, undefined, prisma);
+  const encrypted = encryptInvoiceInput(
+    {
       number: invoiceNumber,
       year: 2026,
       date: new Date('2026-10-07T00:00:00.000Z'),
@@ -645,13 +669,29 @@ export async function createMatrixInvoice(
       totalAmount: totals.totalAmount,
       notes: totals.legalNotes,
       status: 'ISSUED',
+    },
+    dek
+  );
+  const stored = await prisma.invoice.create({
+    data: {
+      userId,
+      ...encrypted,
       items: {
-        create: { description: 'Servizio di consulenza', amount: totals.subtotal },
+        create: encryptInvoiceItemInput(
+          { description: 'Servizio di consulenza', amount: totals.subtotal },
+          dek
+        ),
       },
       payments: { connect: paymentIds.map((id) => ({ id })) },
     },
     include: { client: true, items: true, payments: true },
   });
+  // I generatori lavorano sulle forme decifrate (relazioni sempre presenti: include).
+  const invoice = await decryptInvoice(stored, dek);
+  const client = await decryptClient(stored.client, dek);
+  const items = await Promise.all(stored.items.map((i) => decryptInvoiceItem(i, dek)));
+  const payments = await Promise.all(stored.payments.map((p) => decryptPayment(p, dek)));
+  return { ...invoice, client, items, payments };
 }
 
 export function buildMatrixXml(input: {
