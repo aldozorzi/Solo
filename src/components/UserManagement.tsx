@@ -73,6 +73,7 @@ export function UserManagement({ onRefresh }: UserManagementProps) {
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -175,6 +176,29 @@ export function UserManagement({ onRefresh }: UserManagementProps) {
       alert(kind === 'mfa' ? 'Email per il reset 2FA inviata.' : 'Email per il reset password inviata.');
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Errore sconosciuto');
+    }
+  };
+
+  const revokeSessions = async () => {
+    if (!editingUser) return;
+    if (!window.confirm('Disconnetterà tutte le sessioni dell\'utente, forzando un nuovo login. Continuare?')) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/users/${editingUser.id}/revoke-sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || 'Errore durante la revoca delle sessioni');
+      }
+      alert('Tutte le sessioni dell\'utente sono state revocate.');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Errore sconosciuto');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -396,6 +420,14 @@ export function UserManagement({ onRefresh }: UserManagementProps) {
                       }
                     >
                       Invia email reset 2FA
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={revokeSessions}
+                      disabled={busy}
+                    >
+                      Disconnetti tutti
                     </Button>
                   </div>
                   {!editingUser.totpEnabled && (

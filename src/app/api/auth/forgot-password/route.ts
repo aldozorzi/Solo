@@ -45,9 +45,10 @@ export async function POST(request: NextRequest) {
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return respondOk();
 
-    // Il reset 2FA ha senso solo con la 2FA attiva. Gli utenti Zero-Knowledge
-    // non hanno recovery via email (nemmeno per la 2FA): risposta uniforme.
-    if (data.kind === "mfa" && (!user.totpEnabled || user.zeroKnowledgeEnabled)) {
+    // Il reset 2FA ha senso solo con la 2FA attiva.
+    // Gli utenti Zero-Knowledge ora possono usarlo: il reset 2FA tocca solo
+    // il secondo fattore, non la DEK (quindi non rompe la promessa ZK).
+    if (data.kind === "mfa" && !user.totpEnabled) {
       return respondOk();
     }
 

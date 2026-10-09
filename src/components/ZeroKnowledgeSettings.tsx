@@ -182,7 +182,7 @@ export function ZeroKnowledgeSettings() {
         </CardTitle>
         <CardDescription>
           Quando attiva, il recupero password avviene solo con la tua chiave di recupero.
-          Nessun fallback server, nessuna email di reset. Se perdi la chiave, i dati sono persi per sempre.
+          La 2FA si reimposta comunque via email. Se perdi la chiave, i dati sono persi per sempre.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
