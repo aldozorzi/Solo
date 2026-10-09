@@ -38,6 +38,11 @@ come rischio residuo e come operare (backup, rotazioni, incidenti).
 - **Rotazione sessioni**: ogni utente ha `sessionVersion`; cambio password e reset 2FA la
   incrementano e invalidano tutti i JWT precedenti. I token emessi prima di questa modifica
   (senza versione) richiedono un nuovo login al primo accesso dopo il deploy.
+- **Revoca sessioni (admin)**: l'endpoint `POST /api/users/[id]/revoke-sessions` (solo ADMIN)
+  incrementa la `sessionVersion` dell'utente target, invalidando immediatamente tutte le sue
+  sessioni JWT attive. L'operazione è registrata nell'audit log come `user.sessions_revoked`.
+  Il pulsante "Disconnetti tutti" in Gestione Utenti invoca questo endpoint; è consentito anche
+  l'auto-revoca (l'admin si disconnette e deve riloggarsi).
 - Il ruolo è **write-once**: primo utente = ADMIN, gli altri sempre USER, nessuna API/UI
   può crearlo o modificarlo. Impossibile restare senza admin via app.
 
@@ -64,6 +69,7 @@ come rischio residuo e come operare (backup, rotazioni, incidenti).
 - **Zero-Knowledge**: `MASTER_KEY` **non** può sbloccare W_sys; il reset password
   vero e proprio (`zk-password-reset`) richiede il secret di recupero. Se il
   secret è perso, i dati sono irrecuperabili.
+  - **Reset 2FA**: anche per account ZK avviene via email (non tocca la DEK).
   - **Attivazione e rotazione a due fasi**: `prepare` genera e mostra la nuova
     chiave senza toccare il DB; `confirm` (click esplicito dell'utente) verifica
     un `pendingToken` firmato/cifrato (`NEXTAUTH_SECRET`, TTL 10 min, vincolato a

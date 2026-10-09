@@ -30,7 +30,8 @@ export type AuditEventType =
   | "auth.zk_password_reset"
   | "invoice.created"
   | "invoice.exported"
-  | "invoice.deleted";
+  | "invoice.deleted"
+  | "user.sessions_revoked";
 
 export interface AuditEvent {
   ts: string;

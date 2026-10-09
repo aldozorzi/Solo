@@ -831,5 +831,44 @@ describe("security: anti escalation", () => {
       expect(r.status).toBe(200);
       expect(await statusOf(jarA)).toBe(false);
     });
+
+    test("revoke-sessions: admin revoca le sessioni di un utente", async () => {
+      const before = await prisma.user.findUnique({ where: { id: userB.id }, select: { sessionVersion: true } });
+      expect(before?.sessionVersion).toBeDefined();
+
+      const r = await api("POST", `/api/users/${userB.id}/revoke-sessions`, { jar: adminJar });
+      expect(r.status).toBe(200);
+
+      const after = await prisma.user.findUnique({ where: { id: userB.id }, select: { sessionVersion: true } });
+      expect(after?.sessionVersion).toBe((before?.sessionVersion ?? 0) + 1);
+
+      // La vecchia sessione di B ora è invalida.
+      const me = await api("GET", "/api/clients", { jar: jarB });
+      expect(me.status).toBe(401);
+    });
+
+    test("revoke-sessions: non-admin riceve 403", async () => {
+      // Login fresco di B (le sue sessioni precedenti sono state revocate dal test sopra).
+      const lb = await loginJson("b@test.local", PASSWORD);
+      expect(lb.status).toBe(200);
+      const r = await api("POST", `/api/users/${userA.id}/revoke-sessions`, { jar: lb.jar });
+      expect(r.status).toBe(403);
+    });
+
+    test("revoke-sessions: admin può revocare le proprie sessioni", async () => {
+      const admin = await prisma.user.findUnique({ where: { email: "admin@test.local" } });
+      expect(admin).not.toBeNull();
+      const before = admin!.sessionVersion;
+
+      const r = await api("POST", `/api/users/${admin!.id}/revoke-sessions`, { jar: adminJar });
+      expect(r.status).toBe(200);
+
+      const after = await prisma.user.findUnique({ where: { id: admin!.id }, select: { sessionVersion: true } });
+      expect(after?.sessionVersion).toBe(before + 1);
+
+      // La sessione dell'admin ora è invalida.
+      const me = await api("GET", "/api/clients", { jar: adminJar });
+      expect(me.status).toBe(401);
+    });
   });
 });
