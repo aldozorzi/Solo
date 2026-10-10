@@ -67,7 +67,7 @@ Per ogni combinazione la suite controlla:
 
 ## Gate sicurezza pre-deploy (`test:security`)
 
-`npm run test:security` esegue `tests/integration/security-access.test.ts`: 30 test
+`npm run test:security` esegue `tests/integration/security-access.test.ts`: 35 test
 black-box via HTTP contro un'app in esecuzione (vertical/horizontal escalation,
 uniformità errori login, rate limit, MFA end-to-end, rotazione sessioni, re-auth,
 audit log, autorizzazione per-utente e flussi Zero-Knowledge a due fasi).

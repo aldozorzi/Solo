@@ -24,9 +24,9 @@ enum TaxRegime {
 }
 
 enum InvoiceStatus {
-  DRAFT
   ISSUED
   PAID
+  PARTIALLY_PAID
   CANCELLED
 }
 

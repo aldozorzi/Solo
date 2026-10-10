@@ -83,8 +83,9 @@ interface InvoicePdfProps {
 
 const styles = StyleSheet.create({
   page: {
-    padding: 40,
-    fontSize: 10,
+    // Margini ~2,4cm e corpo 11pt, come la ricevuta di riferimento (SPECS/ricevuta.pdf).
+    padding: 68,
+    fontSize: 11,
     fontFamily: 'Ubuntu Mono',
     lineHeight: 1.5,
   },

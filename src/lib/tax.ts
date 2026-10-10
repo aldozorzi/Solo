@@ -38,6 +38,31 @@ const STAMP_DUTY_AMOUNT = 2.0;
 
 export const WITHHOLDING_RATE_OCCASIONALE = 0.2;
 
+/** Tolleranza di quadratura in euro (stessa usata nella transizione di stato). */
+const PAYMENT_MATCH_EPSILON = 0.005;
+
+export type DerivedInvoiceStatus = 'ISSUED' | 'PAID' | 'PARTIALLY_PAID';
+
+/**
+ * Stato derivato dagli incassi collegati:
+ * - nessun incasso -> ISSUED ("Da saldare");
+ * - incassi che coprono il dovuto (imponibile + IVA, senza bollo) -> PAID ("Saldata");
+ * - altrimenti -> PARTIALLY_PAID ("Parzialmente saldata").
+ */
+export function deriveInvoiceStatus({
+  paymentsSum,
+  dueAmount,
+  hasPayments,
+}: {
+  paymentsSum: number;
+  dueAmount: number;
+  hasPayments: boolean;
+}): DerivedInvoiceStatus {
+  if (!hasPayments) return 'ISSUED';
+  if (paymentsSum + PAYMENT_MATCH_EPSILON >= dueAmount) return 'PAID';
+  return 'PARTIALLY_PAID';
+}
+
 export function calculateInvoiceTotals({
   subtotal,
   clientType,

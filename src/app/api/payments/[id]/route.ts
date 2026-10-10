@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { getUserDek, decryptPayment, decryptClient } from '@/lib/data-encryption';
 import { encryptField as encField } from '@/lib/crypto';
+import { recalculateInvoiceStatus } from '@/lib/invoice-status';
 
 const paymentUpdateSchema = z.object({
   clientId: z.string().min(1, 'Cliente obbligatorio').optional(),
@@ -28,15 +29,12 @@ async function getUserId(): Promise<string> {
   return session.user.id;
 }
 
-async function getPendingPayment(userId: string, paymentId: string) {
+async function getOwnedPayment(userId: string, paymentId: string) {
   const payment = await prisma.payment.findFirst({
     where: { id: paymentId, userId },
   });
   if (!payment) {
     throw new Error('Incasso non trovato o accesso negato');
-  }
-  if (payment.invoiceId) {
-    throw new Error('Incasso già fatturato: non modificabile né eliminabile');
   }
   return payment;
 }
@@ -50,10 +48,19 @@ export async function PUT(
     const dek = await getUserDek(userId);
     const { id } = await params;
 
-    await getPendingPayment(userId, id);
+    const stored = await getOwnedPayment(userId, id);
 
     const body = await request.json();
     const data = paymentUpdateSchema.parse(body);
+
+    // Un incasso collegato non può cambiare cliente (romperebbe il vincolo
+    // stesso-cliente col documento).
+    if (data.clientId && stored.invoiceId && data.clientId !== stored.clientId) {
+      return NextResponse.json(
+        { error: 'Incasso collegato: non è possibile cambiare cliente. Scollegalo prima dal documento.' },
+        { status: 400 }
+      );
+    }
 
     if (data.clientId) {
       const client = await prisma.client.findFirst({
@@ -117,6 +124,12 @@ export async function PUT(
       include: { client: true },
     });
 
+    // Se l'incasso è collegato, la modifica può cambiare la copertura:
+    // lo stato del documento viene rivalutato.
+    if (stored.invoiceId) {
+      await recalculateInvoiceStatus(userId, stored.invoiceId, dek);
+    }
+
     const decrypted = await decryptPayment(payment, dek);
     decrypted.client = await decryptClient(payment.client, dek);
     return NextResponse.json(decrypted);
@@ -131,9 +144,6 @@ export async function PUT(
       if (error.message.includes('accesso negato') || error.message.includes('non trovato')) {
         return NextResponse.json({ error: error.message }, { status: 403 });
       }
-      if (error.message.includes('già fatturato')) {
-        return NextResponse.json({ error: error.message }, { status: 409 });
-      }
     }
     console.error('Error updating payment:', error);
     return NextResponse.json({ error: "Errore nell'aggiornamento incasso" }, { status: 500 });
@@ -147,10 +157,19 @@ export async function DELETE(
   try {
     const userId = await getUserId();
     const { id } = await params;
+    const dek = await getUserDek(userId);
 
-    await getPendingPayment(userId, id);
+    const stored = await getOwnedPayment(userId, id);
+    const linkedInvoiceId = stored.invoiceId;
 
     await prisma.payment.delete({ where: { id } });
+
+    // Se l'incasso era collegato, lo stato del documento va rivalutato
+    // sulla copertura residua.
+    if (linkedInvoiceId) {
+      await recalculateInvoiceStatus(userId, linkedInvoiceId, dek);
+    }
+
     return NextResponse.json({ success: true });
   } catch (error) {
     if (error instanceof Error) {
@@ -159,9 +178,6 @@ export async function DELETE(
       }
       if (error.message.includes('accesso negato') || error.message.includes('non trovato')) {
         return NextResponse.json({ error: error.message }, { status: 403 });
-      }
-      if (error.message.includes('già fatturato')) {
-        return NextResponse.json({ error: error.message }, { status: 409 });
       }
     }
     console.error('Error deleting payment:', error);

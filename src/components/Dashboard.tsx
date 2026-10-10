@@ -85,10 +85,18 @@ export default function Dashboard({ initialSection = 'payments' }: { initialSect
     setEditingInvoice(null);
   };
 
-  const deletePayment = async (paymentId: string) => {
-    if (!confirm("Eliminare questo incasso? L'azione non è reversibile.")) return;
+  const deletePayment = async (payment: PaymentWithRelations) => {
+    const linked = !!payment.invoiceId;
+    if (
+      !confirm(
+        linked
+          ? "Eliminare questo incasso? È collegato a un documento: lo stato del documento verrà ricalcolato. L'azione non è reversibile."
+          : "Eliminare questo incasso? L'azione non è reversibile."
+      )
+    )
+      return;
     try {
-      const res = await fetch(`/api/payments/${paymentId}`, { method: 'DELETE' });
+      const res = await fetch(`/api/payments/${payment.id}`, { method: 'DELETE' });
       if (res.ok) {
         fetchData();
       } else {
@@ -218,7 +226,7 @@ export default function Dashboard({ initialSection = 'payments' }: { initialSect
         <TabsContent value="payments">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-semibold">Registro Incassi</h2>
-            <PaymentForm clients={clients} onSuccess={handleSuccess} />
+            <PaymentForm clients={clients} invoices={invoices} onSuccess={handleSuccess} />
           </div>
 
           <Card>
@@ -263,47 +271,44 @@ export default function Dashboard({ initialSection = 'payments' }: { initialSect
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1">
-                            {!payment.invoiceId ? (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setEditingPayment(payment)}
+                              title="Modifica incasso"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => deletePayment(payment)}
+                              title="Elimina incasso"
+                            >
+                              <Trash2 className="w-4 h-4 text-red-500" />
+                            </Button>
+                            {payment.invoiceId && (
                               <>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => setEditingPayment(payment)}
-                                  title="Modifica incasso"
-                                >
-                                  <Edit className="w-4 h-4" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => deletePayment(payment.id)}
-                                  title="Elimina incasso"
-                                >
-                                  <Trash2 className="w-4 h-4 text-red-500" />
-                                </Button>
-                              </>
-                              ) : (
-                                <>
-                                  {!isOccasionale && (
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      onClick={() => downloadXml(payment.invoiceId as string)}
-                                      title="Scarica fattura XML"
-                                    >
-                                      <Download className="w-4 h-4" />
-                                    </Button>
-                                  )}
+                                {!isOccasionale && (
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    onClick={() => openPdf(payment.invoiceId as string)}
-                                    title={isOccasionale ? 'Apri ricevuta PDF' : 'Apri fattura PDF'}
+                                    onClick={() => downloadXml(payment.invoiceId as string)}
+                                    title="Scarica fattura XML"
                                   >
-                                    <FileText className="w-4 h-4" />
+                                    <Download className="w-4 h-4" />
                                   </Button>
-                                </>
-                              )}
+                                )}
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => openPdf(payment.invoiceId as string)}
+                                  title={isOccasionale ? 'Apri ricevuta PDF' : 'Apri fattura PDF'}
+                                >
+                                  <FileText className="w-4 h-4" />
+                                </Button>
+                              </>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -519,6 +524,7 @@ export default function Dashboard({ initialSection = 'payments' }: { initialSect
             <PaymentForm
               key={editingPayment.id}
               clients={clients}
+              invoices={invoices}
               payment={editingPayment}
               onSuccess={handleSuccess}
             />

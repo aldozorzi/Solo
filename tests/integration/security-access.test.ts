@@ -393,6 +393,101 @@ describe("security: anti escalation", () => {
     expect(r.status).toBe(403);
   });
 
+  test("status derivato in creazione: ISSUED / PARTIALLY_PAID / PAID", async () => {
+    const pNone: string[] = [];
+    const pPart = await mkPayment(userB.id, clientB.id, 30);
+    const pFull = await mkPayment(userB.id, clientB.id, 100);
+
+    // Senza incassi -> ISSUED ("Da saldare").
+    let r = await api("POST", "/api/invoices", {
+      jar: userBJar,
+      body: { clientId: clientB.id, date: "2026-03-01", paymentIds: pNone, items: [{ description: "x", amount: 50 }] },
+    });
+    expect(r.status).toBe(201);
+    expect((r.json as { status: string }).status).toBe("ISSUED");
+
+    // Incassi parziali (30 su 100) -> PARTIALLY_PAID.
+    r = await api("POST", "/api/invoices", {
+      jar: userBJar,
+      body: { clientId: clientB.id, date: "2026-03-02", paymentIds: [pPart.id], items: [{ description: "x", amount: 100 }] },
+    });
+    expect(r.status).toBe(201);
+    expect((r.json as { status: string }).status).toBe("PARTIALLY_PAID");
+
+    // Copertura totale (100 su 100) -> PAID ("Saldata").
+    r = await api("POST", "/api/invoices", {
+      jar: userBJar,
+      body: { clientId: clientB.id, date: "2026-03-03", paymentIds: [pFull.id], items: [{ description: "x", amount: 100 }] },
+    });
+    expect(r.status).toBe(201);
+    expect((r.json as { status: string }).status).toBe("PAID");
+  });
+
+  test("status ricalcolato collegando incassi a fattura esistente", async () => {
+    // Fattura senza incassi -> ISSUED.
+    let r = await api("POST", "/api/invoices", {
+      jar: userBJar,
+      body: { clientId: clientB.id, date: "2026-04-01", items: [{ description: "y", amount: 100 }] },
+    });
+    expect(r.status).toBe(201);
+    const invId = (r.json as { id: string }).id;
+    expect((r.json as { status: string }).status).toBe("ISSUED");
+
+    const statusOf = async () =>
+      (await prisma.invoice.findUnique({ where: { id: invId }, select: { status: true } }))?.status;
+
+    // Collego 30 su 100 -> PARTIALLY_PAID.
+    r = await api("POST", "/api/payments", {
+      jar: userBJar,
+      body: { clientId: clientB.id, amount: 30, paidAt: "2026-04-02", description: "acc", invoiceId: invId },
+    });
+    expect(r.status).toBe(201);
+    expect(await statusOf()).toBe("PARTIALLY_PAID");
+
+    // Collego altri 70 (totale 100) -> PAID.
+    r = await api("POST", "/api/payments", {
+      jar: userBJar,
+      body: { clientId: clientB.id, amount: 70, paidAt: "2026-04-03", description: "saldo", invoiceId: invId },
+    });
+    expect(r.status).toBe(201);
+    expect(await statusOf()).toBe("PAID");
+  });
+
+  test("incassi collegati: modifica ed eliminazione ricalcolano lo stato", async () => {
+    // Fattura da 100 coperta da un incasso da 100 -> PAID.
+    let r = await api("POST", "/api/invoices", {
+      jar: userBJar,
+      body: { clientId: clientB.id, date: "2026-05-01", items: [{ description: "z", amount: 100 }] },
+    });
+    expect(r.status).toBe(201);
+    const invId = (r.json as { id: string }).id;
+    r = await api("POST", "/api/payments", {
+      jar: userBJar,
+      body: { clientId: clientB.id, amount: 100, paidAt: "2026-05-02", description: "pieno", invoiceId: invId },
+    });
+    expect(r.status).toBe(201);
+    const payId = (r.json as { id: string }).id;
+    const statusOf = async () =>
+      (await prisma.invoice.findUnique({ where: { id: invId }, select: { status: true } }))?.status;
+    expect(await statusOf()).toBe("PAID");
+
+    // Modifica dell'incasso collegato (100 -> 60): 200 e ricalcolo -> PARTIALLY_PAID.
+    r = await api("PUT", `/api/payments/${payId}`, { jar: userBJar, body: { amount: 60 } });
+    expect(r.status).toBe(200);
+    expect(await statusOf()).toBe("PARTIALLY_PAID");
+
+    // Cambio cliente su incasso collegato: 400.
+    const otherClient = await mkClient(userB.id, "Cliente B-altro");
+    r = await api("PUT", `/api/payments/${payId}`, { jar: userBJar, body: { clientId: otherClient.id } });
+    expect(r.status).toBe(400);
+    expect(await statusOf()).toBe("PARTIALLY_PAID");
+
+    // Eliminazione dell'incasso collegato: 200 e ricalcolo -> ISSUED (nessun incasso).
+    r = await api("DELETE", `/api/payments/${payId}`, { jar: userBJar });
+    expect(r.status).toBe(200);
+    expect(await statusOf()).toBe("ISSUED");
+  });
+
   test("login: messaggi uniformi ed error code noti", async () => {
     const a = await api("POST", "/api/login", { body: { email: "inesistente@test.local", password: "Password123456", callbackUrl: "/" } });
     const b = await api("POST", "/api/login", { body: { email: "b@test.local", password: "sbagliata-123456", callbackUrl: "/" } });
@@ -913,7 +1008,8 @@ describe("security: anti escalation", () => {
         where: { id: invO.id },
         select: { status: true },
       });
-      expect(stored?.status).toBe("DRAFT");
+      // Incasso da 100 a copertura dei 100 di imponibile -> già Saldata in creazione.
+      expect(stored?.status).toBe("PAID");
     });
 
     test("export PDF attivo come ricevuta", async () => {
