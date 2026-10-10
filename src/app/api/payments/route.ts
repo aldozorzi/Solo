@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { getUserDek, decryptPayment, decryptClient, decryptInvoice, encryptPaymentInput } from '@/lib/data-encryption';
+import { recalculateInvoiceStatus } from '@/lib/invoice-status';
 
 const dateInputSchema = z.string().min(1, 'Data obbligatoria').refine(
   (v) => !Number.isNaN(Date.parse(v)),
@@ -17,7 +18,7 @@ const paymentSchema = z.object({
   originalAmount: z.number().positive('Importo deve essere positivo').optional(),
   originalCurrency: z.string().min(1).max(3).optional(),
   paidAt: dateInputSchema,
-  description: z.string().min(1, 'Descrizione obbligatoria'),
+  description: z.string().optional(),
   invoiceId: z.string().optional(),
 });
 
@@ -95,12 +96,21 @@ export async function POST(request: NextRequest) {
       if (!invoice) {
         throw new Error('Fattura non trovata o accesso negato');
       }
+      if (invoice.clientId !== data.clientId) {
+        return NextResponse.json(
+          { error: "L'incasso deve appartenere allo stesso cliente della fattura" },
+          { status: 400 }
+        );
+      }
     }
 
     const originalCurrency = (data.originalCurrency || '').trim().toUpperCase() || undefined;
+    // Descrizione facoltativa: se vuota, "Accredito" (mai precompilata nel campo HTML).
+    const description = (data.description || '').trim() || 'Accredito';
 
     const encrypted = encryptPaymentInput({
       ...data,
+      description,
       paidAt: new Date(data.paidAt),
       originalCurrency: data.originalAmount !== undefined && originalCurrency ? originalCurrency : undefined,
     }, dek);
@@ -114,6 +124,12 @@ export async function POST(request: NextRequest) {
       },
       include: { client: true },
     });
+
+    // Se l'incasso è collegato a un documento, rivaluta lo stato del documento
+    // (copertura totale -> Saldata, altrimenti Parzialmente saldata).
+    if (data.invoiceId) {
+      await recalculateInvoiceStatus(userId, data.invoiceId, dek);
+    }
 
     const decrypted = await decryptPayment(payment, dek);
     decrypted.client = await decryptClient(payment.client, dek);

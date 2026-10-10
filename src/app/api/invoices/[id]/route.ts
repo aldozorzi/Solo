@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { prisma } from '@/lib/prisma';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { calculateInvoiceTotals } from '@/lib/tax';
+import { calculateInvoiceTotals, deriveInvoiceStatus } from '@/lib/tax';
 import { generateFatturaPAXml, userToSdiConfig, generateFileName, invoiceProgressivo } from '@/lib/xml-generator';
 import { generateInvoicePdfBuffer, generateRicevutaPdfBuffer, userToSenderInfo } from '@/lib/pdf-generator';
 import { authOptions } from '@/lib/auth';
@@ -26,7 +26,7 @@ const invoiceUpdateSchema = z.object({
   clientId: z.string().min(1).optional(),
   paymentIds: z.array(z.string()).min(1).optional(),
   items: z.array(invoiceItemSchema).min(1).optional(),
-  status: z.enum(['DRAFT', 'ISSUED', 'PAID', 'CANCELLED']).optional(),
+  status: z.enum(['ISSUED', 'PAID', 'PARTIALLY_PAID', 'CANCELLED']).optional(),
 });
 
 async function getUserId(): Promise<string> {
@@ -126,20 +126,8 @@ export async function GET(
           { status: 403 }
         );
       }
-      // Transizione di stato all'esportazione XML: totalmente pagata -> PAID, altrimenti ISSUED.
-      // Il confronto è sull'importo dovuto dal cliente (imponibile + IVA, senza bollo:
-      // il bollo virtuale è versato dall'emittente tramite F24). Le annullate non si toccano.
-      if (invoice.status !== 'CANCELLED') {
-        const paymentsSum = invoice.payments.reduce((sum, p) => sum + Number(p.amount), 0);
-        const dueAmount = totals.subtotal + (totals.vatAmount || 0);
-        const nextStatus = paymentsSum + 0.005 >= dueAmount ? 'PAID' : 'ISSUED';
-        if (nextStatus !== invoice.status) {
-          await prisma.invoice.update({
-            where: { id },
-            data: { status: nextStatus },
-          });
-        }
-      }
+      // L'esportazione non cambia mai lo stato: è derivato dagli incassi
+      // in creazione/modifica.
 
       const xml = generateFatturaPAXml({
         invoice: invoiceForExport,
@@ -239,10 +227,12 @@ export async function PUT(
     }
 
     let paymentConnect: { id: string }[] | undefined;
+    let storedPayments = existing.payments;
     if (data.paymentIds) {
       const payments = await prisma.payment.findMany({
         where: { id: { in: data.paymentIds }, userId },
       });
+      storedPayments = payments;
       if (payments.length !== data.paymentIds.length) {
         return NextResponse.json({ error: 'Alcuni pagamenti non trovati o accesso negato' }, { status: 403 });
       }
@@ -287,12 +277,31 @@ export async function PUT(
     const encTotal = encryptField(String(totals.totalAmount), dek);
     const encNotes = totals.legalNotes ? encryptField(totals.legalNotes, dek) : null;
 
+    // Lo stato segue gli incassi: se cambiano righe o collegamenti (e non è
+    // impostato esplicitamente né annullata), viene ricalcolato come in creazione.
+    let derivedStatus: 'ISSUED' | 'PAID' | 'PARTIALLY_PAID' | undefined;
+    if (
+      data.status === undefined &&
+      existing.status !== 'CANCELLED' &&
+      (data.items !== undefined || data.paymentIds !== undefined)
+    ) {
+      const decEffective = await Promise.all(
+        storedPayments.map((p) => decryptPayment(p, dek))
+      );
+      derivedStatus = deriveInvoiceStatus({
+        paymentsSum: decEffective.reduce((sum, p) => sum + Number(p.amount), 0),
+        dueAmount: totals.subtotal + (totals.vatAmount || 0),
+        hasPayments: decEffective.length > 0,
+      });
+    }
+
     const stored = await prisma.invoice.update({
       where: { id },
       data: {
         ...(encDate ? { dateEnc: encDate.ciphertext, dateIv: encDate.iv } : {}),
         clientId: effectiveClientId,
         ...(data.status !== undefined ? { status: data.status } : {}),
+        ...(derivedStatus !== undefined ? { status: derivedStatus } : {}),
         subtotalAmountEnc: encSubtotal.ciphertext,
         subtotalAmountIv: encSubtotal.iv,
         stampDutyAmountEnc: encStamp.ciphertext,

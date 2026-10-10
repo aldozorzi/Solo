@@ -101,7 +101,7 @@ function AnnualRevenueChart({
       viewBox={`0 0 ${width} ${height}`}
       className="h-64 w-full"
       role="img"
-      aria-label={`Fatturato mensile ${year}`}
+      aria-label={`Incassi mensili ${year}`}
     >
       {[0, 0.25, 0.5, 0.75, 1].map((fraction) => {
         const y = paddingTop + chartHeight * (1 - fraction);
@@ -120,7 +120,7 @@ function AnnualRevenueChart({
         const y = paddingTop + chartHeight - barHeight;
         return (
           <g key={month.month}>
-            <title>{`${month.label} ${year}: ${formatCurrency(month.total)} (${month.count} fatture)`}</title>
+            <title>{`${month.label} ${year}: ${formatCurrency(month.total)} (${month.count} incassi)`}</title>
             <rect x={x} y={y} width={barWidth} height={Math.max(barHeight, month.total > 0 ? 3 : 0)} rx={5} fill="var(--primary)" />
             {month.total > 0 && (
               <text x={x + barWidth / 2} y={y - 6} textAnchor="middle" fontSize={11} fill="var(--foreground)">
@@ -151,6 +151,7 @@ export default function HomeDashboard({
 }: HomeDashboardProps) {
   const router = useRouter();
   const refresh = () => router.refresh();
+  const isOccasionale = user.taxRegime === 'PRESTAZIONE_OCCASIONALE';
 
   const handleSignOut = async () => {
     await fetch('/api/login', { method: 'DELETE' }).catch(() => undefined);
@@ -218,13 +219,13 @@ export default function HomeDashboard({
               <div className="stat-tile stat-tile-invoices">
                 <FileText className="w-5 h-5" />
               </div>
-              <AttentionBadge count={summary.draftsCount} label="da inviare" href="/fatture" />
+              <AttentionBadge count={summary.draftsCount} label="da saldare" href="/fatture" />
             </div>
-            <CardTitle className="dashboard-title mt-4">Fatture</CardTitle>
-            <CardDescription>Fatture da inviare</CardDescription>
+            <CardTitle className="dashboard-title mt-4">{isOccasionale ? 'Ricevute' : 'Fatture'}</CardTitle>
+            <CardDescription>{isOccasionale ? 'Ricevute da saldare' : 'Fatture da saldare'}</CardDescription>
             <div className="dashboard-amount text-2xl font-semibold tabular-nums">{formatCurrency(summary.draftsTotal)}</div>
             <div className="text-sm text-muted-foreground">
-              {summary.invoiceCount} fatture totali • {summary.draftsCount} da inviare
+              {summary.invoiceCount} {isOccasionale ? 'ricevute totali' : 'fatture totali'} • {summary.draftsCount} da saldare
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -244,13 +245,13 @@ export default function HomeDashboard({
         <CardHeader>
           <div className="flex flex-wrap items-end justify-between gap-6">
             <div className="space-y-1.5">
-              <CardTitle className="dashboard-title">Fatturato {summary.revenueYear}</CardTitle>
-              <CardDescription>Totale mensile delle fatture emesse e saldate, escluso il bollo</CardDescription>
+              <CardTitle className="dashboard-title">Incassi {summary.revenueYear}</CardTitle>
+              <CardDescription>Totale mensile degli incassi registrati</CardDescription>
             </div>
             <div className="space-y-1.5 text-right">
               <div className="dashboard-amount text-2xl font-semibold tabular-nums">{formatCurrency(summary.annualRevenueTotal)}</div>
               <div className="text-sm text-muted-foreground">
-                {summary.annualRevenueCount} fatture nel {summary.revenueYear}
+                {summary.annualRevenueCount} incassi nel {summary.revenueYear}
               </div>
             </div>
           </div>
@@ -260,7 +261,7 @@ export default function HomeDashboard({
             <AnnualRevenueChart year={summary.revenueYear} monthlyRevenue={summary.monthlyRevenue} />
           ) : (
             <p className="text-sm text-muted-foreground">
-              Nessun fatturato registrato nel {summary.revenueYear}.
+              Nessun incasso registrato nel {summary.revenueYear}.
             </p>
           )}
         </CardContent>

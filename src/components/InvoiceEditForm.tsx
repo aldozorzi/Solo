@@ -26,7 +26,7 @@ const invoiceEditSchema = z.object({
   date: z.string().min(1, 'Data obbligatoria'),
   paymentIds: z.array(z.string()).min(1, 'Seleziona almeno un incasso'),
   items: z.array(invoiceItemSchema).min(1, 'Almeno una riga fattura'),
-  status: z.enum(['DRAFT', 'ISSUED', 'PAID', 'CANCELLED']),
+  status: z.enum(['ISSUED', 'PAID', 'PARTIALLY_PAID', 'CANCELLED']),
 });
 
 type InvoiceEditFormData = z.infer<typeof invoiceEditSchema>;

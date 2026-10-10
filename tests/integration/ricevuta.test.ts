@@ -156,7 +156,7 @@ describe('prestazione occasionale: totali', () => {
         subtotal: 1000,
         clientType: 'ITALY',
         taxRegime: 'PRESTAZIONE_OCCASIONALE',
-        senderType: 'SOCIETA',
+        senderType: 'LIBERO_PROFESSIONISTA',
         clientVatNumber,
       });
       expect(totals.hasWithholding).toBe(false);
@@ -167,6 +167,22 @@ describe('prestazione occasionale: totali', () => {
 
   test('WITHHOLDING_RATE_OCCASIONALE vale 20%', () => {
     expect(WITHHOLDING_RATE_OCCASIONALE).toBe(0.2);
+  });
+
+  test('EU (Germania): niente ritenuta, senza IVA', () => {
+    const totals = calculateInvoiceTotals({
+      subtotal: 532.44,
+      clientType: 'EU',
+      taxRegime: 'PRESTAZIONE_OCCASIONALE',
+      senderType: 'LIBERO_PROFESSIONISTA',
+    });
+    expect(totals.vatAmount).toBe(0);
+    expect(totals.hasWithholding).toBe(false);
+    expect(totals.withholdingAmount).toBe(0);
+    expect(totals.stampDutyAmount).toBe(0);
+    expect(totals.totalAmount).toBe(532.44);
+    expect(totals.legalNotes).toContain('soggetto UE non residente');
+    expect(totals.legalNotes).toContain("art. 5 D.P.R. 633/1972");
   });
 });
 
@@ -220,6 +236,38 @@ describe('prestazione occasionale: contenuto ricevuta PDF', () => {
     // Firma.
     expect(text.endsWith('Aldo Zorzi')).toBe(true);
     // Mai "FATTURA" in una ricevuta.
+    expect(text).not.toMatch(/FATTURA/);
+  });
+
+  test('EU (Germania): ricevuta senza ritenuta né IVA', () => {
+    const deClient: DecryptedClient = {
+      ...EXTRA_EU_CLIENT,
+      id: 'client-de',
+      type: 'EU',
+      name: 'Cliente Germania',
+      vatNumber: 'DE123456789',
+      address: 'Unter den Linden 1',
+      city: 'Berlin',
+      zipCode: '10115',
+      country: 'DE',
+    };
+    const invoice = makeInvoice(deClient, 532.44);
+    const totals: InvoiceTotals = calculateInvoiceTotals({
+      subtotal: 532.44,
+      clientType: 'EU',
+      taxRegime: 'PRESTAZIONE_OCCASIONALE',
+      senderType: 'LIBERO_PROFESSIONISTA',
+    });
+    const text = flattenRicevutaContent(
+      buildRicevutaContent({ invoice, totals, sender: SENDER })
+    ).join('\n');
+
+    expect(text).toContain('RICEVUTA N. 1/2026');
+    expect(text).toContain('Cliente Germania');
+    expect(text).toContain('TOTALE LORDO:');
+    expect(text).toContain('soggetto UE non residente');
+    expect(text).not.toContain('Ritenuta');
+    expect(text).not.toContain('NETTO A PAGARE');
     expect(text).not.toMatch(/FATTURA/);
   });
 

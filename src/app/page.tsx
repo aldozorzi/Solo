@@ -25,7 +25,7 @@ export default async function Home() {
   const revenueYear = new Date().getFullYear();
   const revenueStart = new Date(Date.UTC(revenueYear, 0, 1));
   const revenueEnd = new Date(Date.UTC(revenueYear + 1, 0, 1));
-  const [profile, pendingStored, paymentCount, draftStored, invoiceCount, issuedPaidStored, clientsStored] =
+  const [profile, pendingStored, paymentCount, openStored, invoiceCount, allPaymentsStored, clientsStored] =
     await Promise.all([
       prisma.user.findUnique({
         where: { id: userId },
@@ -44,12 +44,12 @@ export default async function Home() {
       }),
       prisma.payment.count({ where: { userId } }),
       prisma.invoice.findMany({
-        where: { userId, status: "DRAFT" },
+        where: { userId, status: { in: ["ISSUED", "PARTIALLY_PAID"] } },
       }),
       prisma.invoice.count({ where: { userId } }),
-      // Filtro data in JS: date è cifrata, non interrogabile in SQL.
-      prisma.invoice.findMany({
-        where: { userId, status: { in: ["ISSUED", "PAID"] } },
+      // Filtro data in JS: paidAt è cifrato, non interrogabile in SQL.
+      prisma.payment.findMany({
+        where: { userId },
       }),
       prisma.client.findMany({
         where: { userId },
@@ -71,12 +71,16 @@ export default async function Home() {
   );
   const pendingTotal = Math.round(pendingDecrypted.reduce((s, p) => s + p.amount, 0) * 100) / 100;
 
-  const draftDecrypted = await Promise.all(draftStored.map((i) => decryptInvoice(i, dek)));
+  const openDecrypted = await Promise.all(openStored.map((i) => decryptInvoice(i, dek)));
   const draftsTotal =
-    Math.round(draftDecrypted.reduce((s, i) => s + i.subtotalAmount, 0) * 100) / 100;
+    Math.round(openDecrypted.reduce((s, i) => s + i.subtotalAmount, 0) * 100) / 100;
 
-  const annualDecrypted = await Promise.all(issuedPaidStored.map((i) => decryptInvoice(i, dek)));
-  const annualInvoices = annualDecrypted.filter((i) => i.date >= revenueStart && i.date < revenueEnd);
+  // Grafico e totali annuali sugli incassi (paidAt), non sulle fatture.
+  const annualDecrypted = await Promise.all(allPaymentsStored.map((p) => decryptPayment(p, dek)));
+  const annualInvoices = annualDecrypted.filter((p) => {
+    const paidAt = new Date(p.paidAt);
+    return paidAt >= revenueStart && paidAt < revenueEnd;
+  });
 
   const clientsDecrypted = await Promise.all(clientsStored.map((c) => decryptClient(c, dek)));
   clientsDecrypted.sort((a, b) => a.name.localeCompare(b.name, "it"));
@@ -94,9 +98,9 @@ export default async function Home() {
   const monthLabels = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"];
   const monthlyRevenue = monthLabels.map((label, month) => ({ month, label, total: 0, count: 0 }));
   let annualRevenueTotal = 0;
-  for (const invoice of annualInvoices) {
-    const amount = invoice.totalAmount;
-    const month = new Date(invoice.date).getUTCMonth();
+  for (const payment of annualInvoices) {
+    const amount = payment.amount;
+    const month = new Date(payment.paidAt).getUTCMonth();
     monthlyRevenue[month].total = Math.round((monthlyRevenue[month].total + amount) * 100) / 100;
     monthlyRevenue[month].count += 1;
     annualRevenueTotal = Math.round((annualRevenueTotal + amount) * 100) / 100;
@@ -116,7 +120,7 @@ export default async function Home() {
             pendingCount: pendingDecrypted.length,
             pendingTotal,
             invoiceCount,
-            draftsCount: draftDecrypted.length,
+            draftsCount: openDecrypted.length,
             draftsTotal,
             revenueYear,
             annualRevenueTotal,

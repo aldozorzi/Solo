@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { prisma } from '@/lib/prisma';
 import { z } from 'zod';
-import { calculateInvoiceTotals } from '@/lib/tax';
+import { calculateInvoiceTotals, deriveInvoiceStatus } from '@/lib/tax';
 import { authOptions } from '@/lib/auth';
 import { auditEvent } from '@/lib/audit';
 import { getUserDek, decryptInvoice, decryptClient, decryptPayment, decryptInvoiceItem, encryptInvoiceInput, encryptInvoiceItemInput } from '@/lib/data-encryption';
@@ -146,6 +146,14 @@ export async function POST(request: NextRequest) {
     const nextNumber = (lastInvoice?.number || 0) + 1;
     const year = new Date(data.date).getFullYear();
 
+    // Stato iniziale derivato dagli incassi collegati (niente più "Bozza").
+    const linkedPayments = await Promise.all(payments.map((p) => decryptPayment(p, dek)));
+    const initialStatus = deriveInvoiceStatus({
+      paymentsSum: linkedPayments.reduce((sum, p) => sum + Number(p.amount), 0),
+      dueAmount: totals.subtotal + (totals.vatAmount || 0),
+      hasPayments: linkedPayments.length > 0,
+    });
+
     const encryptedInvoice = encryptInvoiceInput({
       number: nextNumber,
       year,
@@ -155,7 +163,7 @@ export async function POST(request: NextRequest) {
       stampDutyAmount: totals.stampDutyAmount,
       totalAmount: totals.totalAmount,
       notes: totals.legalNotes,
-      status: 'DRAFT',
+      status: initialStatus,
     }, dek);
 
     const encryptedItems = data.items.map(item => encryptInvoiceItemInput(item, dek));
