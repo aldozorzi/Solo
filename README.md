@@ -275,7 +275,3 @@ Tutte le API (tranne auth e bootstrap) richiedono sessione e filtrano i dati per
 - `GET/POST /api/users` — lista/crea utenti (ADMIN; POST libero solo per il bootstrap)
 - `GET/PUT/DELETE /api/users/[id]` — dettaglio/modifica/eliminazione utente (ADMIN)
 - `POST /api/users/[id]/revoke-sessions` — revoca tutte le sessioni dell'utente (ADMIN)
-
-## Licenza
-
-Proprietario — solo per uso interno.
