@@ -44,3 +44,6 @@ next-env.d.ts
 logs/
 backups/
 test-output/
+
+# opencode project skills (local dev docs)
+.opencode/skill/
