@@ -58,7 +58,13 @@ export function InvoiceForm({ clients, pendingPayments, onSuccess, documentKind 
     name: 'items',
   });
 
-  const clientPayments = pendingPayments.filter(p => p.clientId === form.watch('clientId'));
+  const watchedClientId = form.watch('clientId');
+  const clientPayments = pendingPayments.filter(p => p.clientId === watchedClientId);
+  const pendingCountByClient = pendingPayments.reduce<Record<string, number>>((acc, p) => {
+    acc[p.clientId] = (acc[p.clientId] ?? 0) + 1;
+    return acc;
+  }, {});
+  const selectedClient = clients.find(c => c.id === watchedClientId);
   const selectedPayments = form.watch('paymentIds');
   const watchedItems = form.watch('items');
   const paymentsTotal = clientPayments
@@ -128,14 +134,31 @@ export function InvoiceForm({ clients, pendingPayments, onSuccess, documentKind 
             <Label htmlFor="clientId">Cliente *</Label>
             <Select value={form.watch('clientId')} onValueChange={handleClientChange} required>
               <SelectTrigger>
-                <SelectValue placeholder="Seleziona cliente" />
+                <SelectValue placeholder="Seleziona cliente">
+                  {selectedClient ? `${selectedClient.name} (${selectedClient.type})` : undefined}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                {clients.map(client => (
-                  <SelectItem key={client.id} value={client.id}>
-                    {client.name} ({client.type})
-                  </SelectItem>
-                ))}
+                {clients.map(client => {
+                  const pendingCount = pendingCountByClient[client.id] ?? 0;
+                  return (
+                    <SelectItem key={client.id} value={client.id}>
+                      <span className="flex items-center gap-2">
+                        <span>{client.name} ({client.type})</span>
+                        <span
+                          className={
+                            pendingCount > 0
+                              ? 'inline-flex min-w-5 items-center justify-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-amber-700'
+                              : 'inline-flex min-w-5 items-center justify-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold leading-none text-muted-foreground'
+                          }
+                          title={`${pendingCount} ${pendingCount === 1 ? 'incasso pendente' : 'incassi pendenti'}`}
+                        >
+                          {pendingCount}
+                        </span>
+                      </span>
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
             {form.formState.errors.clientId && (

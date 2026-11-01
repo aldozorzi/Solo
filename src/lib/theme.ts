@@ -8,9 +8,10 @@ export type ThemeName = (typeof THEMES)[number];
 export const SOLO_STORAGE_KEY = 'solo-theme';
 export const DARK_THEMES: string[] = ['dark', 'mezzanotte', 'tramonto'];
 
-// Applica il tema prima del primo paint (no-flash). Renderizzato nell'HTML
-// iniziale dal layout server, quindi non genera il warning React 19 sui <script>
-// creati durante il render dei componenti client.
+// Applica il tema prima del primo paint (no-flash). Deve essere iniettato
+// nell'<head> solo lato server (vedi ThemeScript/useServerInsertedHTML): il
+// componente <Script> di next/script genera il warning React 19 "Encountered a
+// script tag while rendering React component" durante l'idratazione client.
 export const themeScript = `(function(){try{var t=${JSON.stringify(
   THEMES
 )};var d=document.documentElement;var e=localStorage.getItem(${JSON.stringify(
