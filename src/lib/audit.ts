@@ -45,22 +45,36 @@ export interface AuditEvent {
 const MAX_BYTES = 2 * 1024 * 1024;
 const KEEP_ROTATED = 5;
 
-function logPath(): string | null {
-  if (process.env.AUDIT_LOG_PATH) return process.env.AUDIT_LOG_PATH;
-  if (process.env.VERCEL) return "/tmp/solo-audit.log";
-  return path.join(process.cwd(), "logs", "audit.log");
+// Base directory for audit logs - statically analyzable by Turbopack
+const AUDIT_LOG_DIR = process.env.AUDIT_LOG_PATH
+  ? path.dirname(process.env.AUDIT_LOG_PATH)
+  : process.env.VERCEL
+    ? "/tmp"
+    : path.join(process.cwd(), "logs");
+
+const AUDIT_LOG_FILE = process.env.AUDIT_LOG_PATH
+  ? path.basename(process.env.AUDIT_LOG_PATH)
+  : "solo-audit.log";
+
+function logPath(): string {
+  return path.join(AUDIT_LOG_DIR, AUDIT_LOG_FILE);
 }
 
-function rotateIfNeeded(file: string): void {
+function rotateIfNeeded(baseDir: string, baseFile: string): void {
+  // Su Vercel (production) il filesystem è effimero: niente rotazione.
+  // In development la rotazione serve per non riempire il disco locale.
+  if (process.env.NODE_ENV === "production") return;
+
   try {
+    const file = path.join(baseDir, baseFile);
     const stat = fs.statSync(file);
     if (stat.size < MAX_BYTES) return;
     for (let i = KEEP_ROTATED - 1; i >= 1; i--) {
-      const from = `${file}.${i}`;
-      const to = `${file}.${i + 1}`;
+      const from = path.join(baseDir, `${baseFile}.${i}`);
+      const to = path.join(baseDir, `${baseFile}.${i + 1}`);
       if (fs.existsSync(from)) fs.renameSync(from, to);
     }
-    fs.renameSync(file, `${file}.1`);
+    fs.renameSync(file, path.join(baseDir, `${baseFile}.1`));
   } catch {
     // Il file potrebbe non esistere ancora: niente da ruotare.
   }
@@ -72,10 +86,9 @@ export function auditEvent(event: Omit<AuditEvent, "ts">): void {
   // Sempre in console: finisce nei log Docker/Vercel.
   console.log(`[audit] ${line}`);
   const file = logPath();
-  if (!file) return;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    rotateIfNeeded(file);
+    rotateIfNeeded(AUDIT_LOG_DIR, AUDIT_LOG_FILE);
     fs.appendFileSync(file, line + "\n", { encoding: "utf8" });
   } catch {
     // Best-effort: l'audit non deve mai rompere il flusso applicativo.
