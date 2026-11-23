@@ -48,5 +48,8 @@ test-output/
 # documentazione setup DB locale (contiene path e credenziali di sviluppo)
 db_setup.md
 
+# script di restore locali (contiene chiavi e logica di cifratura: mai nel repo)
+restore-encrypted.js
+
 # opencode project skills (local dev docs)
 .opencode/skill/
