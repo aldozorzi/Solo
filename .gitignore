@@ -45,5 +45,8 @@ logs/
 backups/
 test-output/
 
+# documentazione setup DB locale (contiene path e credenziali di sviluppo)
+db_setup.md
+
 # opencode project skills (local dev docs)
 .opencode/skill/
